@@ -48,6 +48,33 @@ type Config struct {
 	Warnings []string
 }
 
+// exeDir 返回可执行文件所在目录（解析符号链接）；定位失败时返回空字符串。
+//
+// 默认配置文件就是"命令所在目录"下的 config.yaml：mysqlq.exe、config.yaml 与
+// SKILL.md 放在同一个目录即可整体复制部署，与当前工作目录无关。
+func exeDir() string {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return filepath.Dir(exe)
+}
+
+// candidatePaths 返回默认查找顺序（不含 --config 与 $MYSQLQ_CONFIG）：
+// 1. 可执行文件同目录的 config.yaml（默认，与二进制同目录部署）
+// 2. 当前工作目录的 config.yaml（兜底：go run / 脚本调试时二进制在临时目录）
+func candidatePaths() []string {
+	var out []string
+	if dir := exeDir(); dir != "" {
+		out = append(out, filepath.Join(dir, "config.yaml"))
+	}
+	out = append(out, "./config.yaml")
+	return out
+}
+
 // LookedPaths 返回查找配置文件时依次尝试过的位置（仅用于错误提示）。
 func LookedPaths(explicit string) []string {
 	var out []string
@@ -57,11 +84,7 @@ func LookedPaths(explicit string) []string {
 	if env := os.Getenv("MYSQLQ_CONFIG"); env != "" {
 		out = append(out, env)
 	}
-	out = append(out, "./config.yaml", "../config.yaml")
-	if exe, err := os.Executable(); err == nil {
-		out = append(out, filepath.Join(filepath.Dir(exe), "config.yaml"))
-	}
-	return out
+	return append(out, candidatePaths()...)
 }
 
 // Load 按 SPEC §2 的顺序定位并解析配置文件，应用环境变量覆盖与 --db 覆盖，
@@ -167,7 +190,8 @@ func Load(explicitPath, dbOverride string) (*Config, error) {
 	return cfg, nil
 }
 
-// locate 按 SPEC §2 的查找顺序返回第一个存在的配置文件。
+// locate 按 SPEC §2 的查找顺序返回第一个存在的配置文件：
+// --config > $MYSQLQ_CONFIG > <exe 同目录>/config.yaml > ./config.yaml。
 func locate(explicitPath string) (string, error) {
 	// 1/2. 显式指定（--config 或 MYSQLQ_CONFIG）：找错了要明确报错，而不是静默回退。
 	if explicitPath != "" {
@@ -176,12 +200,7 @@ func locate(explicitPath string) (string, error) {
 	if env := os.Getenv("MYSQLQ_CONFIG"); env != "" {
 		return checkPath(env, "MYSQLQ_CONFIG")
 	}
-	// 3/4. 当前目录、上级目录。5. 可执行文件同目录。
-	candidates := []string{"./config.yaml", "../config.yaml"}
-	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "config.yaml"))
-	}
-	for _, c := range candidates {
+	for _, c := range candidatePaths() {
 		if st, err := os.Stat(c); err == nil && !st.IsDir() {
 			abs, err := filepath.Abs(c)
 			if err != nil {
@@ -191,8 +210,8 @@ func locate(explicitPath string) (string, error) {
 		}
 	}
 	return "", errf(
-		"no config file found (looked for --config, $MYSQLQ_CONFIG, ./config.yaml, ../config.yaml, <exe dir>/config.yaml); " +
-			"create a config.yaml or pass --config <path>")
+		"no config file found (looked for --config, $MYSQLQ_CONFIG, <mysqlq dir>/config.yaml, ./config.yaml); " +
+			"put a config.yaml next to mysqlq.exe or pass --config <path>")
 }
 
 func checkPath(p, source string) (string, error) {

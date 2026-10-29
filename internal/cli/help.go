@@ -26,7 +26,8 @@ Commands:
   version                  print tool version
 
 Global flags (may appear before or after the command):
-  -c, --config <path>      config file (default: ./config.yaml, ../config.yaml, exe dir)
+  -c, --config <path>      config file (default: config.yaml next to mysqlq.exe,
+                           then ./config.yaml)
       --db <name>          override the database name
       --format <fmt>       output format: table|json|csv|md (default table)
       --timeout <dur>      query timeout, e.g. 10s, 500ms, 2m (default 30s)

@@ -10,7 +10,7 @@ import (
 // clearEnv 清空可能影响配置加载的环境变量，保证测试确定性。
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"MYSQLQ_HOST", "MYSQLQ_PORT", "MYSQLQ_DB", "MYSQLQ_USER", "MYSQLQ_PASSWORD"} {
+	for _, k := range []string{"MYSQLQ_HOST", "MYSQLQ_PORT", "MYSQLQ_DB", "MYSQLQ_USER", "MYSQLQ_PASSWORD", "MYSQLQ_CONFIG"} {
 		t.Setenv(k, "")
 	}
 }
@@ -151,6 +151,69 @@ func TestOverrides(t *testing.T) {
 	}
 	if cfg.Name != "env_db" || cfg.User != "env_user" {
 		t.Fatalf("env override failed: name=%q user=%q", cfg.Name, cfg.User)
+	}
+}
+
+// TestCandidatePathsOrder 锁定默认查找顺序：可执行文件同目录优先，当前目录兜底。
+//
+// 部署约定（SPEC §2）：mysqlq.exe、config.yaml、SKILL.md 同目录，从任意 cwd 调用
+// 都默认读可执行文件旁边的配置。
+func TestCandidatePathsOrder(t *testing.T) {
+	clearEnv(t)
+	paths := candidatePaths()
+	if len(paths) < 2 {
+		t.Fatalf("candidatePaths() = %v, want exe dir + cwd", paths)
+	}
+	exeDirPath := paths[0]
+	if !strings.HasSuffix(strings.ToLower(exeDirPath), "config.yaml") {
+		t.Fatalf("first candidate = %q, want <exe dir>/config.yaml", exeDirPath)
+	}
+	if exeDirPath == "./config.yaml" {
+		t.Fatalf("first candidate must be the exe directory, got %q", exeDirPath)
+	}
+	// 测试二进制在临时目录里，exe 目录必然不同于仓库目录；最后一个候选是 cwd 兜底。
+	if last := paths[len(paths)-1]; last != "./config.yaml" {
+		t.Fatalf("last candidate = %q, want ./config.yaml fallback", last)
+	}
+
+	// LookedPaths 顺序：--config > $MYSQLQ_CONFIG > 默认候选
+	t.Setenv("MYSQLQ_CONFIG", "env-config.yaml")
+	looked := LookedPaths("explicit.yaml")
+	if len(looked) < 3 || looked[0] != "explicit.yaml" || looked[1] != "env-config.yaml" {
+		t.Fatalf("LookedPaths = %v, want [explicit, env, <exe>/config.yaml, ./config.yaml]", looked)
+	}
+	if looked[2] != paths[0] {
+		t.Fatalf("LookedPaths default candidates = %v, want %v", looked[2:], paths)
+	}
+}
+
+// TestLocateFallsBackToCwd 验证默认查找在 exe 同目录没有配置时会回落到当前工作目录
+// （`go run .` 等二进制不在部署目录的场景），并且 Source 是绝对路径。
+func TestLocateFallsBackToCwd(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte(baseConfig), 0o600); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	cfg, err := Load("", "")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if filepath.Clean(cfg.Source) != filepath.Clean(cfgPath) {
+		t.Fatalf("Source = %q, want %q", cfg.Source, cfgPath)
+	}
+	if !filepath.IsAbs(cfg.Source) {
+		t.Fatalf("Source = %q, want absolute path", cfg.Source)
 	}
 }
 

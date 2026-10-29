@@ -35,32 +35,39 @@ description: 用 mysqlq 命令行工具安全地查询 MySQL（列数据库、�
 
 ## 位置与构建
 
-```
-工具：E:\code\go\mysql-query-cli\bin\mysqlq.exe   （若已在 PATH，直接用 mysqlq）
-构建：powershell -NoProfile -ExecutionPolicy Bypass -File E:\code\go\mysql-query-cli\scripts\build.ps1
-      （装了 PowerShell 7 时可用 pwsh -NoProfile -File <同一脚本>）
-```
-
-调用时建议用绝对路径，避免 cwd 不同导致找不到配置：
+本 `SKILL.md` 与 `mysqlq.exe`、`config.yaml` 位于**同一个目录**（下称"工具目录"）。
+在工具目录里直接运行即可：
 
 ```powershell
-& 'E:\code\go\mysql-query-cli\bin\mysqlq.exe' tables
+.\mysqlq.exe info
 ```
+
+若 `mysqlq.exe` 已在 `PATH` 中，也可直接 `mysqlq info`。从其它目录调用时建议用绝对路径，
+脚本里可用 `$PSScriptRoot` 定位（因此不要依赖当前工作目录）：
+
+```powershell
+$MQ = Join-Path $PSScriptRoot 'mysqlq.exe'
+& $MQ tables
+```
+
+需要重新构建时（有 Go 源码）：在仓库根目录执行
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1`，
+产物就是根目录下的 `mysqlq.exe`（与 `config.yaml`、本文件同级）。
 
 ## 配置
 
-默认自动查找配置文件（第一个存在的生效），无需每次传参：
+默认自动查找配置文件（第一个存在的生效），**默认就是 `mysqlq.exe` 同目录的 `config.yaml`**，
+所以部署时把三者放一起即可，从任何目录调用都不用传参：
 
-1. `--config <path>`
+1. `--config <path>`（命令行显式指定）
 2. 环境变量 `MYSQLQ_CONFIG`
-3. `./config.yaml`（当前目录）
-4. `../config.yaml`
-5. 可执行文件同目录的 `config.yaml`
+3. **`mysqlq.exe` 所在目录的 `config.yaml`**（默认，与 `SKILL.md` 同级）
+4. `./config.yaml`（当前工作目录，兜底：`go run` 等场景）
 
-先复制一份本地配置（示例文件在建表仓库里，`config.yaml` 不入库）：
+工具目录里若只有 `config.example.yaml`，复制一份为 `config.yaml` 再改成实际值：
 
 ```powershell
-Copy-Item E:\code\go\mysql-query-cli\config.example.yaml E:\code\go\mysql-query-cli\config.yaml
+Copy-Item .\config.example.yaml .\config.yaml
 ```
 
 `config.yaml` 内容（扁平 YAML 子集，注释必须独占一行）：
@@ -124,7 +131,7 @@ max_rows: 20        # 可选：单次返回行数上限，默认 20，硬上限 
 
 | 参数 | 说明 | 默认 |
 |---|---|---|
-| `-c, --config <path>` | 指定配置文件 | 自动查找 |
+| `-c, --config <path>` | 指定配置文件 | 自动查找（默认 `mysqlq.exe` 同目录） |
 | `--db <name>` | 覆盖数据库 | `config.yaml` 的 `db_name` |
 | `--format <table\|json\|csv\|md>` | 输出格式 | `table` |
 | `--timeout <dur>` | 查询超时（`500ms`/`10s`/`2m`） | `30s` |
@@ -218,7 +225,7 @@ SELECT 1 AS ok'
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `config: no config file found ...` | 找不到 config.yaml | `--config` 指定绝对路径，或 `cd` 到项目根目录 |
+| `config: no config file found ...` | 工具目录里没有 config.yaml | 把 `config.yaml` 放到 `mysqlq.exe` 同目录，或用 `--config <绝对路径>` 指定 |
 | `error: cannot connect to MySQL at ...` / `dial tcp ... refused` | MySQL 未启动/端口不对 | 让用户确认服务与 `db_host`/`db_port` |
 | `error: access denied for user ...` | 账号密码错/无权限 | 检查 `config.yaml`；不要反复重试 |
 | `error: table does not exist: ...` | 表名错/库错 | 先 `tables` 确认，或加 `--db` |
@@ -231,7 +238,7 @@ SELECT 1 AS ok'
 ## 完整示例
 
 ```powershell
-$MQ = 'E:\code\go\mysql-query-cli\bin\mysqlq.exe'
+$MQ = '.\mysqlq.exe'    # 先 cd 到工具目录（mysqlq.exe / config.yaml / SKILL.md 所在目录）
 
 # 探查：库 → 表 → 结构 → 数据
 & $MQ databases --format json
@@ -255,11 +262,7 @@ $MQ = 'E:\code\go\mysql-query-cli\bin\mysqlq.exe'
 
 ## 安装为技能（可选）
 
-把本文件复制到 agent 的技能目录即可被发现：
-
-```powershell
-Copy-Item E:\code\go\mysql-query-cli\SKILL.md <skills-dir>\mysql-query-cli\SKILL.md
-```
-
-再用 `--config` 或环境变量 `MYSQLQ_CONFIG` 指向数据库配置；若希望直接叫 `mysqlq`，
-把 `E:\code\go\mysql-query-cli\bin` 加入 `PATH`。
+把 `SKILL.md`、`mysqlq.exe`、`config.yaml` **整个工具目录**复制到 agent 的技能目录（例如
+`<skills-dir>\mysql-query-cli\`）即可被发现；三者同目录，工具会自动读取同目录的配置。
+若希望全局命令 `mysqlq`，把该目录加入 `PATH`。
+配置文件也可用 `--config` 或 `MYSQLQ_CONFIG` 指向其它位置。

@@ -1,7 +1,9 @@
 # mysqlq 配置示例
 #
-# 使用方法：复制为 config.yaml 后按实际环境修改：
+# 使用方法：复制为本目录下的 config.yaml（与 mysqlq.exe、SKILL.md 同目录）：
 #     Copy-Item config.example.yaml config.yaml
+# mysqlq 默认读取"命令所在目录"（即 mysqlq.exe 所在目录）的 config.yaml，
+# 与当前工作目录无关；也可以用 --config <path> 或环境变量 MYSQLQ_CONFIG 指定。
 # config.yaml 已被 .gitignore 排除，不会提交到仓库（避免把密码带进版本库）。
 #
 # 解析器是"扁平 YAML 子集"：仅支持 `key: value`，不支持嵌套/列表/行内注释。

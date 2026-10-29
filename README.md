@@ -9,17 +9,32 @@
 
 规格详见 [docs/SPEC.md](docs/SPEC.md)，AI 使用说明见 [SKILL.md](SKILL.md)，验证报告见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
 
+## 部署布局
+
+`mysqlq.exe`、`config.yaml`、`SKILL.md` 放在**同一个目录**即可整体复制使用：
+
+```
+mysql-query-cli\
+  mysqlq.exe          # 构建产物
+  config.yaml         # 本地配置（默认被读取；不入库）
+  SKILL.md            # AI 使用说明
+  config.example.yaml # 配置示例（入库）
+```
+
+工具默认读取**可执行文件所在目录**的 `config.yaml`，与当前工作目录无关；
+需要改路径时用 `--config <path>` 或环境变量 `MYSQLQ_CONFIG`。
+
 ## 构建
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
-# 产物：bin\mysqlq.exe
+# 产物：.\mysqlq.exe（仓库根目录，与 config.yaml、SKILL.md 同级）
 ```
 
 > 若安装了 PowerShell 7，`pwsh -NoProfile -File .\scripts\build.ps1` 亦可。
 
 > `scripts\env.ps1` 会把 GOCACHE / GOMODCACHE 放到工作区 `.cache` 并设置 `GOSUMDB=off`
-> （本机沙箱无法写用户级缓存）。正常联网环境下直接 `go build -o bin\mysqlq.exe .` 也可以。
+> （本机沙箱无法写用户级缓存）。正常联网环境下直接 `go build -o mysqlq.exe .` 也可以。
 > 唯一依赖：`github.com/go-sql-driver/mysql`。
 
 ## 配置
@@ -30,8 +45,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
 Copy-Item config.example.yaml config.yaml
 ```
 
-配置文件为扁平 YAML 子集（`key: value`，注释独占一行），自动查找顺序：
-`--config` → `MYSQLQ_CONFIG` → `./config.yaml` → `../config.yaml` → 可执行文件同目录。
+配置文件为扁平 YAML 子集（`key: value`，注释独占一行），查找顺序（第一个存在的生效）：
+`--config` → `MYSQLQ_CONFIG` → **`mysqlq.exe` 同目录的 `config.yaml`（默认）** → `./config.yaml`（兜底，便于 `go run`）。
 
 ```yaml
 db_host: 127.0.0.1
@@ -48,7 +63,7 @@ max_rows: 20
 ## 快速开始
 
 ```powershell
-$MQ = '.\bin\mysqlq.exe'
+$MQ = '.\mysqlq.exe'
 
 & $MQ info                                # 连接信息、MySQL 版本、当前库
 & $MQ databases                           # 有哪些库

@@ -1,7 +1,9 @@
-# Build the mysqlq binary into .\bin\mysqlq.exe
-#   pwsh -NoProfile -File .\scripts\build.ps1
+# Build mysqlq into the repo root (next to config.yaml / SKILL.md).
+# Layout: mysqlq.exe + config.yaml + SKILL.md live in the same directory, so the
+# tool always finds its config next to the executable.
+#   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
 param(
-    [string]$Output = 'bin/mysqlq.exe'
+    [string]$Output = 'mysqlq.exe'
 )
 
 . (Join-Path $PSScriptRoot 'env.ps1')

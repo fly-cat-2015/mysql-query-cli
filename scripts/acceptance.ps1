@@ -1,9 +1,9 @@
 # Lead independent acceptance test for mysqlq.
 # Focus: every write/DDL statement must be blocked (exit 3) and must not change the DB.
-# Usage: pwsh -NoProfile -File .\scripts\acceptance.ps1 [-Binary .\bin\mysqlq.exe]
+# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\acceptance.ps1 [-Binary .\mysqlq.exe]
 # NOTE: keep this file ASCII-only. Windows PowerShell 5.1 misreads UTF-8 without BOM.
 param(
-    [string]$Binary = '.\bin\mysqlq.exe',
+    [string]$Binary = '.\mysqlq.exe',
     [string]$Config = '.\config.yaml'
 )
 

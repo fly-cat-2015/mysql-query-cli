@@ -1,7 +1,7 @@
 # mysqlq — 规格说明（权威版）
 
 一个用 Go 编写的 **MySQL 只读查询命令行工具**，面向 AI agent 使用。
-工作目录：`E:\code\go\mysql-query-cli`，配置文件：仓库根目录 `config.yaml`。
+工作目录：`E:\code\go\mysql-query-cli`（源码仓库根目录，同时也是部署目录）。
 
 ---
 
@@ -17,26 +17,31 @@
 
 ## 1. 产物与目录布局
 
+**部署布局**：`mysqlq.exe`、`config.yaml`、`SKILL.md` 放在**同一个目录**（即仓库根目录），
+整体复制到任何位置都能直接运行；工具默认读取**可执行文件所在目录**的 `config.yaml`，与当前工作目录无关。
+
 ```
-mysql-query-cli/
-  config.yaml            # 已存在，不要修改
+mysql-query-cli/           # 源码仓库根目录 = 部署目录
+  mysqlq.exe               # 构建产物（与 config.yaml、SKILL.md 同目录；*.exe 不入库）
+  config.yaml              # 本地配置（不入库）
+  config.example.yaml      # 配置示例（入库）
+  SKILL.md                 # 给 AI 的使用说明（入库，与可执行文件同目录）
   go.mod  go.sum
-  main.go                # 极薄，调用 internal/cli.Execute()
-  internal/config/       # 配置加载（扁平 YAML 子集 + 环境变量覆盖）
-  internal/guard/        # SQL 词法分析 + 只读拦截（含单元测试）
-  internal/db/           # 连接、只读会话、查询执行、元数据查询
-  internal/output/       # table / json / csv / md 渲染
-  internal/cli/          # 子命令与参数解析
-  scripts/env.ps1        # 构建环境（已存在）
-  scripts/build.ps1      # 构建到 bin/mysqlq.exe（已存在）
-  scripts/verify/        # 验证脚本（由验证同学维护）
-  docs/SPEC.md           # 本文件
-  docs/VERIFICATION.md   # 验证报告（由验证同学维护）
-  SKILL.md               # 给 AI 的使用说明（由 Lead 维护）
-  README.md              # 人类说明（由 Lead 维护）
+  main.go                  # 极薄，调用 internal/cli.Execute()
+  internal/config/         # 配置加载（扁平 YAML 子集 + 环境变量覆盖）
+  internal/guard/          # SQL 词法分析 + 只读拦截（含单元测试）
+  internal/db/             # 连接、只读会话、查询执行、元数据查询
+  internal/output/         # table / json / csv / md 渲染
+  internal/cli/            # 子命令与参数解析
+  scripts/env.ps1          # 构建环境
+  scripts/build.ps1        # 构建到根目录 mysqlq.exe
+  scripts/verify/          # 验证脚本（由验证同学维护）
+  docs/SPEC.md             # 本文件
+  docs/VERIFICATION.md     # 验证报告（由验证同学维护）
+  README.md                # 人类说明（由 Lead 维护）
 ```
 
-二进制名 `mysqlq`，构建输出 `bin/mysqlq.exe`。
+二进制名 `mysqlq`，构建输出 `mysqlq.exe`（仓库根目录，与配置和 SKILL.md 同级）。
 
 **构建环境**：任何 `go` 命令前先 `. .\scripts\env.ps1`（把 GOCACHE/GOMODCACHE 放到工作区 `.cache`，`GOSUMDB=off`）。
 `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1` 即可构建
@@ -48,22 +53,26 @@ mysql-query-cli/
 
 ```yaml
 db_host: 127.0.0.1
-db_name: bbc
-db_user: root
-db_passwd: root
+db_port: 3306
+db_name: your_database
+db_user: your_user
+db_passwd: your_password
+max_rows: 20
 ```
+
+（示例见仓库根目录 `config.example.yaml`；本地 `config.yaml` 不入库。）
 
 - 解析规则：逐行读取，忽略空行和 `#` 开头的注释；`key: value`，key/value 两端去空白；value 可被单引号或双引号包裹（去掉引号）；`#` 出现在值中间时**不**当作注释（避免密码被截断）。
 - 支持键（大小写不敏感）：`db_host`、`db_port`（默认 3306）、`db_name`、`db_user`、`db_passwd`（别名 `db_password`）、`db_charset`（默认 utf8mb4）、`max_rows`（默认 20，取值 1..100，>100 钳制为 100 并警告）。
 - `max_rows` 非整数或 <1 → 配置错误，exit 1，消息说明合法范围；>100 → 钳制为 100，stderr 警告 `[mysqlq] warning: max_rows 500 in config exceeds the hard limit 100, using 100`。
 - 未知键：忽略（不报错）。
 - 查找顺序（第一个存在者胜出）：
-  1. `--config <path>`
+  1. `--config <path>`（命令行显式指定）
   2. 环境变量 `MYSQLQ_CONFIG`
-  3. `./config.yaml`（当前工作目录）
-  4. `../config.yaml`
-  5. 可执行文件同目录 `config.yaml`
-- 都找不到：stderr 报错并 exit 1，提示用 `--config` 指定。
+  3. **可执行文件所在目录的 `config.yaml`**（默认；即 `mysqlq.exe` 同目录，与 SKILL.md 同级）
+  4. `./config.yaml`（当前工作目录，兜底：`go run .` 等二进制不在部署目录的场景）
+- 查找顺序与"当前工作目录"无关：从任意目录调用 `mysqlq.exe`，默认都读它自己旁边的 `config.yaml`。
+- 都找不到：stderr 报错并 exit 1，提示把 `config.yaml` 放到 `mysqlq.exe` 同目录，或用 `--config` 指定。
 - 环境变量覆盖（在文件之后生效）：`MYSQLQ_HOST`、`MYSQLQ_PORT`、`MYSQLQ_DB`、`MYSQLQ_USER`、`MYSQLQ_PASSWORD`。
 - **密码永不进入任何输出**（`info`、日志、错误信息都不打印）。
 
@@ -297,7 +306,7 @@ mysqlq: blocked: statement contains forbidden keyword "INSERT"; this tool only a
 
 ## 8. 验证 / 交付标准
 
-1. `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1` 成功，`bin\mysqlq.exe` 可用。
+1. `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1` 成功，根目录 `mysqlq.exe` 可用。
 2. `mysqlq info` 正确显示服务器版本 `8.0.33`、库 `bbc`，且不泄露密码。
 3. `databases`、`tables`、`columns sale_pay`、`indexes sale_pay`、`ddl sale_pay`、`schema sale_pay`、`query 'SELECT ...'`、`find order` 全部正常，四种格式都合法。
 4. §7 拦截矩阵全部 exit 3，数据零变化。
@@ -311,6 +320,6 @@ mysqlq: blocked: statement contains forbidden keyword "INSERT"; this tool only a
 
 ## 9. 交付物清单
 
-- Go 源码（上述布局）、`go.mod`/`go.sum`、`bin/mysqlq.exe`
+- Go 源码（上述布局）、`go.mod`/`go.sum`、`mysqlq.exe`（根目录，与 config.yaml、SKILL.md 同级）
 - `docs/VERIFICATION.md`（验证同学：命令 + 期望 + 实际结果 + 拦截矩阵证据）
 - `SKILL.md`、`README.md`（Lead）
