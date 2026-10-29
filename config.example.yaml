@@ -1,0 +1,19 @@
+# mysqlq 配置示例
+#
+# 使用方法：复制为 config.yaml 后按实际环境修改：
+#     Copy-Item config.example.yaml config.yaml
+# config.yaml 已被 .gitignore 排除，不会提交到仓库（避免把密码带进版本库）。
+#
+# 解析器是"扁平 YAML 子集"：仅支持 `key: value`，不支持嵌套/列表/行内注释。
+# 注释必须独占一行；值不要写成 `3306  # 端口` 这种带行尾注释的形式。
+
+db_host: 127.0.0.1
+db_port: 3306
+db_name: your_database
+db_user: your_user
+db_passwd: your_password
+db_charset: utf8mb4
+
+# 单次查询最多返回行数：默认 20，硬上限 100（写更大值会被钳制为 100 并警告）。
+# 也可用 --max-rows 临时覆盖（仅允许 1..100）。
+max_rows: 20

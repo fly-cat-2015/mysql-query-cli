@@ -1,0 +1,7 @@
+# 仓库内统一使用 LF 保存；Windows 检出时由 Git 负责换行转换
+* text=auto eol=lf
+
+# PowerShell 脚本在 Windows 上按 CRLF 检出（Windows PowerShell 5.1 更稳妥）
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf

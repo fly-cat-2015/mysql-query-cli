@@ -1,0 +1,10 @@
+/bin/
+/.cache/
+/config.yaml
+*.exe
+*.test
+
+# 验证脚本的临时配置与运行日志（证据报告 docs/VERIFICATION.md 已提交）
+/scripts/verify/tmp/
+/scripts/verify/last-run.log
+/scripts/verify/last-run.md
