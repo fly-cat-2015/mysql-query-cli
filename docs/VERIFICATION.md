@@ -1,21 +1,24 @@
 # mysqlq 只读查询 CLI — 独立黑盒验证报告
 
-> 验证对象：`E:\code\go\mysql-query-cli`（二进制 `bin\mysqlq.exe`）
-> 规格依据：`docs/SPEC.md`（§3 命令/参数、§4 输出格式、§5 退出码、§6 只读防护、§8 验收标准）
+> 验证对象：`E:\code\go\mysql-query-cli`（二进制 `mysqlq.exe`，仓库根目录即部署目录）
+> 规格依据：`docs/SPEC.md`（§1 产物与目录布局、§2 配置查找顺序、§3 命令/参数、§4 输出格式、§5 退出码、§6 只读防护、§8 验收标准）
 > 验证方式：**纯黑盒**。未读取、未修改任何 Go 源码；仅通过进程调用二进制并与独立 `mysql.exe` 客户端交叉核对数据。
+
+> 本轮（task-3）针对两处变更做了独立复核：①构建产物从 `bin\mysqlq.exe` 迁移到仓库根目录 `mysqlq.exe`（`bin/` 已删除，根目录即部署目录）；②配置查找顺序改为 **`--config` > `$MYSQLQ_CONFIG` > 可执行文件同目录 `config.yaml` > `./config.yaml`**，去掉旧的 `../config.yaml` 兜底，默认读取与当前工作目录无关。
 
 ## 0. 结论摘要
 
 | 项目 | 结果 |
 | --- | --- |
-| 验证用例总数 | 326 |
-| PASS | 324 |
+| 验证用例总数 | 338 |
+| PASS | 336 |
 | WARN（互操作提示，非功能/安全缺陷） | 2 |
 | FAIL | 0 |
 | [BLOCKER] | **0** |
-| 二进制 SHA256 是否在验证期间变化 | 否（前后一致，`7C0A02C9122730BBC23CF18AB61560B6...`） |
+| 部署布局 | `mysqlq.exe` + `config.yaml` + `config.example.yaml` + `SKILL.md` 同级（仓库根目录）；`bin/` 已删除；配置默认读 exe 同目录，与 cwd 无关 |
+| 二进制 SHA256 是否在验证期间变化 | 否（前后一致，`612C93F579391C252E21870DBC9CBF6C...`） |
 | 拦截后数据/结构是否变化 | 否（45 条拦截用例逐条双客户端核对 + 全量结束复核，均为 12/2/11/0/0） |
-| **总体结论** | **可交付（PASS）**：功能、退出码、四种格式、配置优先级、只读拦截、行数硬上限、超时防护均符合 SPEC；仅 2 项 CSV 互操作提示（见 §11），不影响数据安全与核心功能 |
+| **总体结论** | **可交付（PASS）**：部署布局、配置解析顺序、功能、退出码、四种格式、只读拦截、行数硬上限、超时防护均符合 SPEC；仅 2 项 CSV 互操作提示（见 §10 MINOR-1），不影响数据安全与核心功能 |
 
 ## 1. 环境与方法
 
@@ -24,21 +27,23 @@
 | 项目 | 值 |
 | --- | --- |
 | 主机/工作目录 | `E:\code\go\mysql-query-cli` |
-| 二进制 | `E:\code\go\mysql-query-cli\bin\mysqlq.exe` |
-| 二进制大小 | 8,228,352 字节 |
-| 二进制 SHA256 | `7C0A02C9122730BBC23CF18AB61560B62F0AEC1B684AA7238F7426BE0FDDB4B0` |
+| 部署布局 | 仓库根目录即部署目录：`mysqlq.exe`、`config.yaml`、`config.example.yaml`、`SKILL.md` 同级；`bin/` 已删除 |
+| 二进制 | `E:\code\go\mysql-query-cli\mysqlq.exe` |
+| 二进制大小 | 8,248,832 字节 |
+| 二进制 SHA256 | `612C93F579391C252E21870DBC9CBF6C439C74C675CE90362E35DBD8B24D8E23` |
 | 配置文件 | `E:\code\go\mysql-query-cli\config.yaml`（未修改） |
 | MySQL 服务器 | 8.0.33（127.0.0.1:3306，库 `bbc`，用户 root） |
 | 独立 mysql 客户端 | `D:\bin\mysql-8.0.33-winx64\bin\mysql.exe`（交叉核对用） |
 | 验证脚本宿主 | Windows PowerShell 5.1.26100.9711（无 pwsh） |
-| 验证时间 | 2026-10-29 21:31:51 |
+| 验证时间 | 2026-10-29 22:05:38 |
 | 基线（验证前后一致） | 12 张表；`sale_pay`=2 行；`after_sale_reason`=11 行；`sale_pay_rel`=0 行；无 `zz_probe`/`sale_pay_bak`/`t_x` 等残留 |
 
 ### 1.2 方法说明
 
-- **黑盒约束**：全程只调用 `bin\mysqlq.exe` 与独立 `mysql.exe`；未读取 `internal/`、`main.go` 等实现代码；未修改 `config.yaml`、`docs/SPEC.md`、`SKILL.md`、`README.md`、`scripts/acceptance.ps1`、`bin/`，写作用域仅 `scripts/verify/**` 与本文档。
+- **黑盒约束**：全程只调用根目录 `mysqlq.exe` 与独立 `mysql.exe`；未读取 `internal/`、`main.go` 等实现代码；未修改 `config.yaml`、`docs/SPEC.md`、`SKILL.md`、`README.md`、`scripts/acceptance.ps1`、根目录 `mysqlq.exe`，写作用域仅 `scripts/verify/**` 与本文档。
 - **输出捕获**：使用 `System.Diagnostics.Process` 分别捕获 stdout/stderr（UTF-8 解码）。原因：PowerShell 5.1 用 `2> file` 会把原生进程 stderr 包装成 `NativeCommandError` 文本，污染“stderr 是否含 blocked / 是否出现驱动日志”的断言；同时 `&` 调用运算符在 PS 5.1 下会丢弃空字符串参数，无法构造“空语句”用例。
-- **每例证据**：命令、期望、实际（exit code + stdout 字节数 + stderr 摘要 + 关键 stdout 断言）、结论。完整 326 例原始证据见 `scripts/verify/last-run.log` / `scripts/verify/last-run.md`（由脚本自动生成、可重复执行）。
+- **每例证据**：命令、期望、实际（exit code + stdout 字节数 + stderr 摘要 + 关键 stdout 断言）、结论。完整 338 例原始证据见 `scripts/verify/last-run.log` / `scripts/verify/last-run.md`（由脚本自动生成、可重复执行）。
+- **配置解析顺序（本轮新增重点）**：将 `mysqlq.exe`（或整个部署目录）复制到临时目录进行隔离验证：exe 同目录默认生效、exe 同目录优先于 cwd、`--config`/`MYSQLQ_CONFIG` 覆盖、无配置时的错误可达性、以及 `../config.yaml` 兜底确已移除；同时覆盖 `go run` 场景的 `./config.yaml` 兜底。
 - **只读拦截后的完整性**：每条拦截用例后立即用 mysqlq 执行计数查询，并用独立 `mysql.exe` 再核对一次：表数量=12、`sale_pay`=2、`after_sale_reason`=11、`sale_pay_rel`=0、残留表=0；全部跑完后再整体复核一次。
 - **二进制不可变性**：验证开始与结束各取一次 SHA256，确认期间无人重建二进制。
 - **复现命令**：`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify\verify.ps1`（退出码 0=全部 PASS，1=存在 FAIL）。
@@ -47,13 +52,14 @@
 
 | 分组 | 用例数 | PASS | WARN | FAIL |
 | --- | --- | --- | --- | --- |
-| env | 3 | 3 | 0 | 0 |
+| env | 4 | 4 | 0 | 0 |
 | baseline | 4 | 4 | 0 | 0 |
 | commands | 29 | 29 | 0 | 0 |
 | formats | 105 | 103 | 2 | 0 |
 | format-detail | 18 | 18 | 0 | 0 |
 | exitcodes | 22 | 22 | 0 | 0 |
-| config | 19 | 19 | 0 | 0 |
+| config | 16 | 16 | 0 | 0 |
+| config-order | 14 | 14 | 0 | 0 |
 | guard | 55 | 55 | 0 | 0 |
 | integrity | 46 | 46 | 0 | 0 |
 | defense | 13 | 13 | 0 | 0 |
@@ -68,32 +74,32 @@
 | --- | --- | --- | --- |
 | cmd-01 | `version` 输出 `mysqlq 1.0.0`，exit 0 | exit=0; stdout=13B; stderr: | PASS |
 | cmd-01b | `version` 标准输出恰好一行、无多余内容 | [mysqlq 1.0.0] | PASS |
-| cmd-02 | `info` 输出 10 个 KEY/VALUE 行：8.0.33 / bbc / read_only=true / 不含密码 | exit=0; stdout=349B; stderr: [mysqlq] 10 row(s) in 0ms \| | PASS |
+| cmd-02 | `info` 输出 10 个 KEY/VALUE 行：8.0.33 / bbc / read_only=true / 不含密码 | exit=0; stdout=349B; stderr: [mysqlq] 10 row(s) in 0ms | PASS |
 | cmd-02b | `info` 的 stdout+stderr 不含密码值 | leaks=0 | PASS |
 | cmd-02c | `info` 行顺序固定：tool_version→config_file→host→port→database→user→server_version→read_only→default_max_rows→default_timeout | KEY > ---------------- > tool_version > config_file > host > port > database > user > server_version > read_only > default_max_rows > defau... | PASS |
-| cmd-03 | `databases` 默认排除 4 个系统库，按名字排序 | exit=0; stdout=1669B; stderr: [mysqlq] 17 row(s) in 1ms \| | PASS |
+| cmd-03 | `databases` 默认排除 4 个系统库，按名字排序 | exit=0; stdout=1669B; stderr: [mysqlq] 17 row(s) in 1ms | PASS |
 | cmd-03b | `databases` 默认返回 17 个非系统库 | count=17 sorted=True | PASS |
-| cmd-04 | `databases --all` 含 information_schema/mysql/performance_schema/sys | exit=0; stdout=2085B; stderr: [mysqlq] 21 row(s) in 1ms \| | PASS |
+| cmd-04 | `databases --all` 含 information_schema/mysql/performance_schema/sys | exit=0; stdout=2085B; stderr: [mysqlq] 21 row(s) in 0ms | PASS |
 | cmd-04b | `databases --all` 共 21 行（配合 --max-rows 100） | count=21 | PASS |
-| cmd-05 | `tables` 返回 12 表，列 TABLE/TYPE/ENGINE/ROWS/COMMENT，含中文注释 | exit=0; stdout=1526B; stderr: [mysqlq] 12 row(s) in 2ms \| | PASS |
+| cmd-05 | `tables` 返回 12 表，列 TABLE/TYPE/ENGINE/ROWS/COMMENT，含中文注释 | exit=0; stdout=1526B; stderr: [mysqlq] 12 row(s) in 2ms | PASS |
 | cmd-05b | `tables` 计数 12，`sale_pay` 的 ROWS 估算=2 | count=12 sale_pay.ROWS=2 | PASS |
-| cmd-06 | `tables --all` 可用，exit 0 | exit=0; stdout=1526B; stderr: [mysqlq] 12 row(s) in 2ms \| | PASS |
-| cmd-07 | `columns sale_pay` 18 列，列顺序含 `#`/COLUMN/TYPE/NULL/KEY/DEFAULT/EXTRA/COMMENT | exit=0; stdout=3156B; stderr: [mysqlq] 18 row(s) in 2ms \| | PASS |
+| cmd-06 | `tables --all` 可用，exit 0 | exit=0; stdout=1526B; stderr: [mysqlq] 12 row(s) in 2ms | PASS |
+| cmd-07 | `columns sale_pay` 18 列，列顺序含 `#`/COLUMN/TYPE/NULL/KEY/DEFAULT/EXTRA/COMMENT | exit=0; stdout=3156B; stderr: [mysqlq] 18 row(s) in 2ms | PASS |
 | cmd-07b | `columns` 计数 18 与独立 mysql 客户端一致，`#` 严格 1..18 | count=18 mysql_client=18 ordered=True headers=True | PASS |
-| cmd-08 | `indexes sale_pay` 4 个索引，主键 PRIMARY 排最前，其余按名排序，COLUMNS 逗号拼接 | exit=0; stdout=515B; stderr: [mysqlq] 4 row(s) in 2ms \| | PASS |
+| cmd-08 | `indexes sale_pay` 4 个索引，主键 PRIMARY 排最前，其余按名排序，COLUMNS 逗号拼接 | exit=0; stdout=515B; stderr: [mysqlq] 4 row(s) in 2ms | PASS |
 | cmd-08b | `indexes` 计数 4 与独立 mysql 客户端一致 | count=4 mysql_client=4 primary_first=True | PASS |
-| cmd-09 | `ddl sale_pay` 输出 `SHOW CREATE TABLE` 原文（含 AUTO_INCREMENT） | exit=0; stdout=1353B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
+| cmd-09 | `ddl sale_pay` 输出 `SHOW CREATE TABLE` 原文（含 AUTO_INCREMENT） | exit=0; stdout=1353B; stderr: [mysqlq] 1 row(s) in 1ms | PASS |
 | cmd-09b | `ddl` table 格式不做对齐表格（无 `----`），为多行原文 | lines=25 hasSeparator=False | PASS |
-| cmd-10 | `schema sale_pay` table 格式依次打印 `== columns ==`、`== indexes ==`、`== ddl ==` | exit=0; stdout=3848B; stderr: [mysqlq] 18 row(s) in 2ms \| [mysqlq] 4 row(s) in 1ms \| [mysqlq] 1 row(s) in 0ms \| | PASS |
-| cmd-11 | `query "SELECT 1 AS one"` 正常返回 | exit=0; stdout=12B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
-| cmd-12 | `query -` 从 stdin 读 SQL 并执行 | exit=0; stdout=29B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
-| cmd-13 | `find order` 结果含 KIND=TABLE/COLUMN 两类 | exit=0; stdout=2837B; stderr: [mysqlq] 20 row(s) in 3ms \| | PASS |
+| cmd-10 | `schema sale_pay` table 格式依次打印 `== columns ==`、`== indexes ==`、`== ddl ==` | exit=0; stdout=3848B; stderr: [mysqlq] 18 row(s) in 1ms \| [mysqlq] 4 row(s) in 1ms \| [mysqlq] 1 row(s) in 0ms | PASS |
+| cmd-11 | `query "SELECT 1 AS one"` 正常返回 | exit=0; stdout=12B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
+| cmd-12 | `query -` 从 stdin 读 SQL 并执行 | exit=0; stdout=29B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
+| cmd-13 | `find order` 结果含 KIND=TABLE/COLUMN 两类 | exit=0; stdout=2837B; stderr: [mysqlq] 20 row(s) in 2ms | PASS |
 | cmd-13b | `find` 行序：匹配表在前、匹配列在后 | count=20 order_ok=True | PASS |
-| cmd-14 | `find` 关键字大小写不敏感（SALE_ORDER 命中 sale_order） | exit=0; stdout=127B; stderr: [mysqlq] 1 row(s) in 2ms \| | PASS |
-| cmd-15 | `find` 关键字含 `%` 时按 LIKE 透传（sale% 命中 sale_order/sale_pay） | exit=0; stdout=1034B; stderr: [mysqlq] 8 row(s) in 3ms \| | PASS |
-| cmd-16 | `find` 无匹配返回 0 行，exit 0 | exit=0; stdout=3B; stderr: [mysqlq] 0 row(s) in 3ms \| | PASS |
-| cmd-17 | `dbs` 别名等价于 `databases` | exit=0; stdout=1669B; stderr: [mysqlq] 17 row(s) in 1ms \| | PASS |
-| cmd-18 | `--help` exit 0，含全部命令与全局参数说明 | exit=0; stdout=1947B; stderr: | PASS |
+| cmd-14 | `find` 关键字大小写不敏感（SALE_ORDER 命中 sale_order） | exit=0; stdout=127B; stderr: [mysqlq] 1 row(s) in 3ms | PASS |
+| cmd-15 | `find` 关键字含 `%` 时按 LIKE 透传（sale% 命中 sale_order/sale_pay） | exit=0; stdout=1034B; stderr: [mysqlq] 8 row(s) in 3ms | PASS |
+| cmd-16 | `find` 无匹配返回 0 行，exit 0 | exit=0; stdout=3B; stderr: [mysqlq] 0 row(s) in 3ms | PASS |
+| cmd-17 | `dbs` 别名等价于 `databases` | exit=0; stdout=1669B; stderr: [mysqlq] 17 row(s) in 2ms | PASS |
+| cmd-18 | `--help` exit 0，含全部命令与全局参数说明 | exit=0; stdout=1986B; stderr: | PASS |
 | cmd-18b | `--help` stderr 为空（帮助属数据，写 stdout） | stderr=0B | PASS |
 
 ## 3. 四种输出格式矩阵（SPEC §4）
@@ -119,24 +125,24 @@
 
 | 用例 | 期望 | 实际（摘要） | 结论 |
 | --- | --- | --- | --- |
-| det-01 | table：SQL NULL 显示 `NULL`，单元格内换行替换为空格，无 `+--+` 边框 | exit=0; stdout=252B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
+| det-01 | table：SQL NULL 显示 `NULL`，单元格内换行替换为空格，无 `+--+` 边框 | exit=0; stdout=252B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
 | det-01b | table：单元格内换行折叠后仍是 1 行数据（表头+分隔+1 数据行=3 行） | datalines=3 | PASS |
-| det-02 | json：NULL→null；DECIMAL 保留原文 `1.50`；BIGINT 精确；DATETIME→字符串 | exit=0; stdout=187B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
+| det-02 | json：NULL→null；DECIMAL 保留原文 `1.50`；BIGINT 精确；DATETIME→字符串 | exit=0; stdout=187B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
 | det-02b | json：null/引号/内嵌换行经解析后正确回读 | parsed=True | PASS |
 | det-02c | json：2 空格缩进、末尾换行且无多余空行 | indent=True trailingLF=True | PASS |
-| det-03 | json：中文以 UTF-8 原文输出（不转义为 \uXXXX） | exit=0; stdout=28B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
+| det-03 | json：中文以 UTF-8 原文输出（不转义为 \uXXXX） | exit=0; stdout=28B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
 | det-03b | json：不含 `\u4e2d` 之类的转义 | escaped=False | PASS |
-| det-04 | csv：含逗号/双引号/换行的字段正确加引号转义，NULL 为空字段，CRLF 行尾 | exit=0; stdout=106B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
+| det-04 | csv：含逗号/双引号/换行的字段正确加引号转义，NULL 为空字段，CRLF 行尾 | exit=0; stdout=106B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
 | det-04b | csv：Import-Csv 解析后值可正确还原 | rows=1 b=x,y a=[] | PASS |
-| det-05 | md：`\|` 转义为 `\\|`，换行转 `<br>`，NULL 输出 `NULL` | exit=0; stdout=189B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
-| det-06 | json：非 UTF-8 二进制按 base64 字符串输出（`UNHEX('FF')`→`"/w=="`） | exit=0; stdout=33B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
-| det-07 | 空结果集：table 只有表头+分隔行，stderr 有 `[mysqlq] 0 row(s)` | exit=0; stdout=120B; stderr: [mysqlq] 0 row(s) in 0ms \| | PASS |
+| det-05 | md：`\|` 转义为 `\\|`，换行转 `<br>`，NULL 输出 `NULL` | exit=0; stdout=189B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
+| det-06 | json：非 UTF-8 二进制按 base64 字符串输出（`UNHEX('FF')`→`"/w=="`） | exit=0; stdout=33B; stderr: [mysqlq] 1 row(s) in 1ms | PASS |
+| det-07 | 空结果集：table 只有表头+分隔行，stderr 有 `[mysqlq] 0 row(s)` | exit=0; stdout=120B; stderr: [mysqlq] 0 row(s) in 0ms | PASS |
 | det-07b | 空结果 table 无数据行 | lines=2 | PASS |
-| det-empty-json | 空结果 json 为 `[]` | exit=0; stdout=3B; stderr: [mysqlq] 0 row(s) in 0ms \| | PASS |
+| det-empty-json | 空结果 json 为 `[]` | exit=0; stdout=3B; stderr: [mysqlq] 0 row(s) in 1ms | PASS |
 | det-empty-json-valid | 空结果 json 仍是合法 JSON | [] \| | PASS |
-| det-empty-csv | 空结果 csv 仅表头，无数据行 | exit=0; stdout=56B; stderr: [mysqlq] 0 row(s) in 1ms \| | PASS |
+| det-empty-csv | 空结果 csv 仅表头，无数据行 | exit=0; stdout=56B; stderr: [mysqlq] 0 row(s) in 0ms | PASS |
 | det-empty-csv-valid | 空结果 csv 可被 Import-Csv 解析为 0 行 | rows=0 | PASS |
-| det-empty-md | 空结果 md 仍有表头与分隔行 | exit=0; stdout=107B; stderr: [mysqlq] 0 row(s) in 1ms \| | PASS |
+| det-empty-md | 空结果 md 仍有表头与分隔行 | exit=0; stdout=107B; stderr: [mysqlq] 0 row(s) in 0ms | PASS |
 
 ## 4. 退出码验证（SPEC §5）
 
@@ -144,24 +150,24 @@
 
 | 用例 | 期望 | 实际（摘要） | 结论 |
 | --- | --- | --- | --- |
-| exit-success | 成功查询 → 0 | exit=0; stdout=23B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
+| exit-success | 成功查询 → 0 | exit=0; stdout=23B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
 | exit-unknown-cmd | 未知子命令 → 2，stderr 含 usage | exit=2; stdout=0B; stderr: mysqlq: usage: unknown command "nosuchcmd" (commands: info, databases, tables, columns, indexes, ddl, schema, qu... | PASS |
-| exit-missing-arg-columns | `columns` 缺表名 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: columns requires exactly 1 argument, got 0 (run "mysqlq --help") \| | PASS |
-| exit-missing-arg-indexes | `indexes` 缺表名 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: indexes requires exactly 1 argument, got 0 (run "mysqlq --help") \| | PASS |
-| exit-missing-arg-ddl | `ddl` 缺表名 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: ddl requires exactly 1 argument, got 0 (run "mysqlq --help") \| | PASS |
-| exit-missing-arg-schema | `schema` 缺表名 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: schema requires exactly 1 argument, got 0 (run "mysqlq --help") \| | PASS |
-| exit-missing-arg-query | `query` 缺 SQL → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: query requires exactly 1 argument, got 0 (run "mysqlq --help") \| | PASS |
-| exit-missing-arg-find | `find` 缺关键字 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: find requires exactly 1 argument, got 0 (run "mysqlq --help") \| | PASS |
-| exit-extra-args | `query` 多余参数 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: query requires exactly 1 argument, got 2 (run "mysqlq --help") \| | PASS |
-| exit-version-extra | `version` 多余参数 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: version takes no arguments, got 1 \| | PASS |
-| exit-bad-format | 非法 `--format xml` → 2，提示合法值 | exit=2; stdout=0B; stderr: mysqlq: usage: invalid --format "xml": expected one of table, json, csv, md \| | PASS |
-| exit-maxrows-101 | `--max-rows 101` → 2，提示 1..100 | exit=2; stdout=0B; stderr: mysqlq: usage: --max-rows must be between 1 and 100 (got 101) \| | PASS |
-| exit-maxrows-0 | `--max-rows 0` → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: --max-rows must be between 1 and 100 (got 0) \| | PASS |
-| exit-maxrows-neg | `--max-rows -1` → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: --max-rows must be between 1 and 100 (got -1) \| | PASS |
-| exit-unknown-flag | 未知 flag `--nope` → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: unknown flag "--nope" (run "mysqlq --help") \| | PASS |
-| exit-bad-timeout | 非法 `--timeout abc` → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: invalid --timeout "abc": expected a positive duration like 10s, 500ms, 2m \| | PASS |
-| exit-no-table | 不存在的表 → 1，错误含库名 bbc 与表名 | exit=1; stdout=0B; stderr: mysqlq: error: table "no_such_table" does not exist in database "bbc" (list tables with "mysqlq tables") \| | PASS |
-| exit-bad-sql | 坏 SQL/不存在表 → 1，stderr 为 MySQL 错误 | exit=1; stdout=0B; stderr: mysqlq: error: table does not exist: Table 'bbc.no_such_table' doesn't exist (list tables with "mysqlq tables") \| | PASS |
+| exit-missing-arg-columns | `columns` 缺表名 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: columns requires exactly 1 argument, got 0 (run "mysqlq --help") | PASS |
+| exit-missing-arg-indexes | `indexes` 缺表名 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: indexes requires exactly 1 argument, got 0 (run "mysqlq --help") | PASS |
+| exit-missing-arg-ddl | `ddl` 缺表名 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: ddl requires exactly 1 argument, got 0 (run "mysqlq --help") | PASS |
+| exit-missing-arg-schema | `schema` 缺表名 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: schema requires exactly 1 argument, got 0 (run "mysqlq --help") | PASS |
+| exit-missing-arg-query | `query` 缺 SQL → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: query requires exactly 1 argument, got 0 (run "mysqlq --help") | PASS |
+| exit-missing-arg-find | `find` 缺关键字 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: find requires exactly 1 argument, got 0 (run "mysqlq --help") | PASS |
+| exit-extra-args | `query` 多余参数 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: query requires exactly 1 argument, got 2 (run "mysqlq --help") | PASS |
+| exit-version-extra | `version` 多余参数 → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: version takes no arguments, got 1 | PASS |
+| exit-bad-format | 非法 `--format xml` → 2，提示合法值 | exit=2; stdout=0B; stderr: mysqlq: usage: invalid --format "xml": expected one of table, json, csv, md | PASS |
+| exit-maxrows-101 | `--max-rows 101` → 2，提示 1..100 | exit=2; stdout=0B; stderr: mysqlq: usage: --max-rows must be between 1 and 100 (got 101) | PASS |
+| exit-maxrows-0 | `--max-rows 0` → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: --max-rows must be between 1 and 100 (got 0) | PASS |
+| exit-maxrows-neg | `--max-rows -1` → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: --max-rows must be between 1 and 100 (got -1) | PASS |
+| exit-unknown-flag | 未知 flag `--nope` → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: unknown flag "--nope" (run "mysqlq --help") | PASS |
+| exit-bad-timeout | 非法 `--timeout abc` → 2 | exit=2; stdout=0B; stderr: mysqlq: usage: invalid --timeout "abc": expected a positive duration like 10s, 500ms, 2m | PASS |
+| exit-no-table | 不存在的表 → 1，错误含库名 bbc 与表名 | exit=1; stdout=0B; stderr: mysqlq: error: table "no_such_table" does not exist in database "bbc" (list tables with "mysqlq tables") | PASS |
+| exit-bad-sql | 坏 SQL/不存在表 → 1，stderr 为 MySQL 错误 | exit=1; stdout=0B; stderr: mysqlq: error: table does not exist: Table 'bbc.no_such_table' doesn't exist (list tables with "mysqlq tables") | PASS |
 | exit-no-db | 不存在的库 → 1，提示 database does not exist | exit=1; stdout=0B; stderr: mysqlq: error: database "no_such_db" does not exist (check --db or db_name in the config file; list databases wi... | PASS |
 | exit-missing-config | `--config` 指向不存在的文件 → 1，提示用 --config | exit=1; stdout=0B; stderr: mysqlq: config: config file "E:\\code\\go\\mysql-query-cli\\scripts\\verify\\tmp\\nope.yaml" (from --config) doe... | PASS |
 
@@ -169,31 +175,60 @@
 
 ## 5. 配置与环境变量（SPEC §2）
 
-配置查找顺序、环境变量覆盖、`--db` 覆盖、以及“密码永不进入任何输出”均已逐项验证。密码泄露测试使用不会出现在其他字段的唯一哨兵值：`S3cr3tLeak_9z`（不可达端口配置）、`LeakMarker_9z`（错误密码配置 / MYSQLQ_PASSWORD 环境变量）。
+本轮配置查找顺序变更为：
+
+```
+1) --config <path>                          （命令行显式指定，最高优先）
+2) $MYSQLQ_CONFIG                           （环境变量）
+3) <mysqlq.exe 所在目录>/config.yaml        （默认；与当前工作目录无关）
+4) ./config.yaml                            （cwd 兜底，仅为 go run 等场景）
+```
+
+原来的 `../config.yaml` 兜底已按 SPEC 要求移除。配置加载顺序、环境变量覆盖、`--db` 覆盖、以及“密码永不进入任何输出”均已逐项验证。密码泄露测试使用不会出现在其他字段的唯一哨兵值：`S3cr3tLeak_9z`（不可达端口配置）、`LeakMarker_9z`（错误密码配置 / MYSQLQ_PASSWORD 环境变量）。
 
 | 用例 | 期望 | 实际（摘要） | 结论 |
 | --- | --- | --- | --- |
-| cfg-explicit | `--config <path>` 生效：info 的 config_file 为该路径，default_max_rows=5 | exit=0; stdout=390B; stderr: [mysqlq] 10 row(s) in 0ms \| | PASS |
-| cfg-env-config | `MYSQLQ_CONFIG` 生效（config_file 指向 env 指定文件，max_rows=5） | exit=0; stdout=390B; stderr: [mysqlq] 10 row(s) in 0ms \| | PASS |
-| cfg-cli-over-env | 优先级 `--config` > `MYSQLQ_CONFIG`（取 max_rows=9 的配置） | exit=0; stdout=394B; stderr: [mysqlq] 10 row(s) in 0ms \| | PASS |
-| cfg-cwd | 无 --config/MYSQLQ_CONFIG 时使用当前目录 `./config.yaml`（max_rows=7） | exit=0; stdout=398B; stderr: [mysqlq] 10 row(s) in 0ms \| | PASS |
-| cfg-env-over-cwd | `MYSQLQ_CONFIG` > 当前目录 config.yaml | exit=0; stdout=398B; stderr: [mysqlq] 10 row(s) in 0ms \| | PASS |
-| cfg-parent-fallback | 查找链后备：在 `bin/` 下运行时能通过 `../config.yaml` 找到根配置 | exit=0; stdout=349B; stderr: [mysqlq] 10 row(s) in 0ms \| | PASS |
-| cfg-quoted | 配置值可用引号包裹（`db_passwd: "root"`）并成功连接 | exit=0; stdout=24B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
-| cfg-unknown-key | 未知配置键被忽略，不报错 | exit=0; stdout=24B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
+| cfg-explicit | `--config <path>` 生效：info 的 config_file 为该路径，default_max_rows=5 | exit=0; stdout=390B; stderr: [mysqlq] 10 row(s) in 1ms | PASS |
+| cfg-env-config | `MYSQLQ_CONFIG` 生效（config_file 指向 env 指定文件，max_rows=5） | exit=0; stdout=390B; stderr: [mysqlq] 10 row(s) in 0ms | PASS |
+| cfg-cli-over-env | 优先级 `--config` > `MYSQLQ_CONFIG`（取 max_rows=9 的配置） | exit=0; stdout=394B; stderr: [mysqlq] 10 row(s) in 0ms | PASS |
+| cfg-quoted | 配置值可用引号包裹（`db_passwd: "root"`）并成功连接 | exit=0; stdout=24B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
+| cfg-unknown-key | 未知配置键被忽略，不报错 | exit=0; stdout=24B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
 | cfg-bad-maxrows | `max_rows: abc` → 配置错误 exit 1，提示 1..100 | exit=1; stdout=0B; stderr: mysqlq: config: invalid max_rows "abc" in E:\code\go\mysql-query-cli\scripts\verify\tmp\cfg_badmax.yam... | PASS |
 | cfg-bad-port | 不可达端口 → 运行时错误 exit 1，含 host:port | exit=1; stdout=0B; stderr: mysqlq: error: cannot connect to MySQL at 127.0.0.1:3399: dial tcp 127.0.0.1:3399: connectex: No conne... | PASS |
 | cfg-bad-port-noleak | 连接失败错误不打印密码（哨兵 S3cr3tLeak_9z） | leaks=0 | PASS |
 | cfg-bad-pw-noleak | Access denied 错误不打印密码（哨兵 LeakMarker_9z） | leaks=0 | PASS |
 | cfg-env-pw-noleak | `MYSQLQ_PASSWORD` 哨兵不出现在任何输出 | leaks=0 | PASS |
 | cfg-env-pw-exit | 错误 `MYSQLQ_PASSWORD` → exit 1（access denied） | exit=1 | PASS |
-| cfg-mysqlq-db | `MYSQLQ_DB=funds` 覆盖 db_name（info 显示 funds） | exit=0; stdout=351B; stderr: [mysqlq] 10 row(s) in 0ms \| | PASS |
-| cfg-db-flag | `--db information_schema` 生效（可列出系统视图，--max-rows 100） | exit=0; stdout=9660B; stderr: [mysqlq] 79 row(s) in 2ms \| | PASS |
-| cfg-db-over-env | `--db` 优先于 `MYSQLQ_DB`（显示 bbc 而非 funds） | exit=0; stdout=349B; stderr: [mysqlq] 10 row(s) in 0ms \| | PASS |
-| cfg-db-funds | `--db funds` 在第二个真实库上查询 `DATABASE()` 正确 | exit=0; stdout=30B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
+| cfg-mysqlq-db | `MYSQLQ_DB=funds` 覆盖 db_name（info 显示 funds） | exit=0; stdout=351B; stderr: [mysqlq] 10 row(s) in 0ms | PASS |
+| cfg-db-flag | `--db information_schema` 生效（可列出系统视图，--max-rows 100） | exit=0; stdout=9660B; stderr: [mysqlq] 79 row(s) in 2ms | PASS |
+| cfg-db-over-env | `--db` 优先于 `MYSQLQ_DB`（显示 bbc 而非 funds） | exit=0; stdout=349B; stderr: [mysqlq] 10 row(s) in 0ms | PASS |
+| cfg-db-funds | `--db funds` 在第二个真实库上查询 `DATABASE()` 正确 | exit=0; stdout=30B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
 | cfg-env-port | `MYSQLQ_PORT=3399` 生效 → exit 1 连接失败 | exit=1 | PASS |
 
 `info` 正常输出仅 10 行 KEY/VALUE（tool_version/config_file/host/port/database/user/server_version/read_only/default_max_rows/default_timeout），无任何密码字段；另断言输出中不含 `root:root`、`@tcp(`、`db_passwd:`、`password=` 等凭证模式。
+
+### 5.1 配置查找顺序专项（本轮新增，SPEC §2）
+
+通过把 `mysqlq.exe`（或整个部署目录）**复制到隔离的临时目录**来独立验证查找顺序，避免 cwd / exe 同目录互相干扰；每条都断言 `info` 的 `config_file` 指向、`database` 与 `default_max_rows` 均来自预期那份配置。
+
+| 用例 | 期望 | 实际（摘要） | 结论 |
+| --- | --- | --- | --- |
+| ord-01 | 默认：从无关 cwd 调用根目录 exe → 读 exe 同目录 `config.yaml`（config_file=根配置，database=bbc，max_rows=20） | exit=0; stdout=349B; stderr: [mysqlq] 10 row(s) in 0ms; config_file=E:\code\go\mysql-query-cli\config.yaml; database=bbc; max_rows=20 | PASS |
+| ord-02 | 默认：从真实 `%TEMP%` 子目录调用 → 仍读 exe 同目录配置（与当前工作目录无关） | exit=0; stdout=349B; stderr: [mysqlq] 10 row(s) in 0ms; config_file=E:\code\go\mysql-query-cli\config.yaml; database=bbc; max_rows=20 | PASS |
+| ord-03 | exe 同目录配置优先于 cwd 的诱饵配置（取 20 而非 cwd 的 7） | exit=0; stdout=349B; stderr: [mysqlq] 10 row(s) in 0ms; config_file=E:\code\go\mysql-query-cli\config.yaml; database=bbc; max_rows=20 | PASS |
+| ord-04 | 复制的部署目录（exe+funds 配置）从仓库根调用 → 读部署目录配置（funds/11），不读 cwd 根配置 | exit=0; stdout=411B; stderr: [mysqlq] 10 row(s) in 0ms; config_file=E:\code\go\mysql-query-cli\scripts\verify\tmp\deploy_dir\config.yaml; database=funds; max_rows=11 | PASS |
+| ord-05 | 复制的部署目录换一个 cwd 调用 → 仍读部署目录配置（11 而非 cwd 的 9） | exit=0; stdout=411B; stderr: [mysqlq] 10 row(s) in 0ms; config_file=E:\code\go\mysql-query-cli\scripts\verify\tmp\deploy_dir\config.yaml; database=funds; max_rows=11 | PASS |
+| ord-06 | `--config` 覆盖 exe 同目录配置（取 5，而非部署目录的 11） | exit=0; stdout=390B; stderr: [mysqlq] 10 row(s) in 0ms; config_file=E:\code\go\mysql-query-cli\scripts\verify\tmp\cfg_max5.yaml; database=bbc; max_rows=5 | PASS |
+| ord-07 | `MYSQLQ_CONFIG` 覆盖 exe 同目录配置（取 5，而非部署目录的 11） | exit=0; stdout=390B; stderr: [mysqlq] 10 row(s) in 0ms; config_file=E:\code\go\mysql-query-cli\scripts\verify\tmp\cfg_max5.yaml; database=bbc; max_rows=5 | PASS |
+| ord-08 | exe 同目录无配置时使用 `./config.yaml` 兜底（go run 场景，取 cwd 的 7） | exit=0; stdout=398B; stderr: [mysqlq] 10 row(s) in 0ms; config_file=E:\code\go\mysql-query-cli\scripts\verify\tmp\cwd_a\config.yaml; database=bbc; max_rows=7 | PASS |
+| ord-09 | `MYSQLQ_CONFIG` 优先于 `./config.yaml` 兜底（取 5，而非 cwd 的 7） | exit=0; stdout=390B; stderr: [mysqlq] 10 row(s) in 0ms; config_file=E:\code\go\mysql-query-cli\scripts\verify\tmp\cfg_max5.yaml; database=bbc; max_rows=5 | PASS |
+| ord-10 | 完全无配置 → exit 1，stderr 含 `no config file found`，并指引放到 mysqlq.exe 同目录或用 `--config` | exit=1; stdout=0B; stderr: mysqlq: config: no config file found (looked for --config, $MYSQLQ_CONFIG, <mysqlq dir>/config.yaml, ./config.yaml); put a config.yaml next to mysqlq.exe or pass --config... | PASS |
+| ord-10b | 无配置错误信息不含凭证模式（无泄露） | stderr=mysqlq: config: no config file found (looked for --config, $MYSQLQ_CONFIG, <mysqlq dir>/config.yaml,... | PASS |
+| ord-11 | 旧 `../config.yaml` 兜底已移除：配置仅存在于 cwd 的父目录 → exit 1（不再被加载） | exit=1; stdout=0B; stderr: mysqlq: config: no config file found (looked for --config, $MYSQLQ_CONFIG, <mysqlq dir>/config.yaml, ./config.yaml); put a config.yaml next to mysqlq.exe or pass --config... | PASS |
+| ord-11b | 输出不引用父目录的配置路径（证明确实没有读取） | references=False | PASS |
+| ord-12 | 部署目录可整体迁移（exe+config 一起移动）后依然可用（funds） | exit=0; stdout=48B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
+
+专项结论：exe 同目录 `config.yaml` 为默认配置且优先于 cwd；`--config` / `MYSQLQ_CONFIG` 覆盖顺序正确；`./config.yaml` 仅在 exe 同目录无配置时兜底；无配置时报错清晰可执行；旧 `../config.yaml` 兜底确已移除。与 SPEC §2 完全一致。
 
 ## 6. 只读拦截矩阵（SPEC §6 / §7 / §8.4）
 
@@ -260,10 +295,10 @@
 | phr-02 | 短语 `INTO DUMPFILE` 被拦截 | exit=3; stdout=0B; stderr: mysqlq: blocked: statement contains forbidden phrase "INTO DUMPFILE"; this tool only allows read-only ... | PASS |
 | phr-03 | 短语 `LOCK IN SHARE MODE` 被拦截 | exit=3; stdout=0B; stderr: mysqlq: blocked: statement contains forbidden phrase "LOCK IN SHARE MODE"; this tool only allows read-... | PASS |
 | phr-04 | 短语 `FOR SHARE` 被拦截 | exit=3; stdout=0B; stderr: mysqlq: blocked: statement contains forbidden phrase "FOR SHARE"; this tool only allows read-only quer... | PASS |
-| order-01 | guard 先于任何 DB 交互：不可达端口配置 + `DROP` → 仍 exit 3（而非连接错误 1） | exit=3; stdout=0B; stderr: mysqlq: blocked: statement contains forbidden keyword "DROP"; this tool only allows read-only queries \| | PASS |
-| order-02 | guard 先于任何 DB 交互：错误密码配置 + `INSERT` → 仍 exit 3 | exit=3; stdout=0B; stderr: mysqlq: blocked: statement contains forbidden keyword "INSERT"; this tool only allows read-only querie... | PASS |
-| sz-01 | 语句 > 64KB → exit 3（提示 70014 bytes / limit 65536），且不连库 | exit=3; stdout=0B; stderr: mysqlq: blocked: statement is too long (70007 bytes, limit 65536 bytes); split it into smaller queries... | PASS |
-| parse-01 | 未闭合 `/*` 注释 → 无法安全解析，exit 3 | exit=3; stdout=0B; stderr: mysqlq: blocked: cannot safely parse statement: unterminated /* comment at line 1, column 10 \| | PASS |
+| order-01 | guard 先于任何 DB 交互：不可达端口配置 + `DROP` → 仍 exit 3（而非连接错误 1） | exit=3; stdout=0B; stderr: mysqlq: blocked: statement contains forbidden keyword "DROP"; this tool only allows read-only queries | PASS |
+| order-02 | guard 先于任何 DB 交互：错误密码配置 + `INSERT` → 仍 exit 3 | exit=3; stdout=0B; stderr: mysqlq: blocked: statement contains forbidden keyword "INSERT"; this tool only allows read-only queries | PASS |
+| sz-01 | 语句 > 64KB → exit 3（提示 70014 bytes / limit 65536），且不连库 | exit=3; stdout=0B; stderr: mysqlq: blocked: statement is too long (70007 bytes, limit 65536 bytes); split it into smaller queries | PASS |
+| parse-01 | 未闭合 `/*` 注释 → 无法安全解析，exit 3 | exit=3; stdout=0B; stderr: mysqlq: blocked: cannot safely parse statement: unterminated /* comment at line 1, column 10 | PASS |
 | parse-02 | 语句中间的 `/*!50000 ... */` 版本注释 → exit 3 | exit=3; stdout=0B; stderr: mysqlq: blocked: cannot safely parse statement: versioned comment /*! ... */ is not allowed (MySQL exe... | PASS |
 
 ### 6.3 完整性总核对
@@ -274,7 +309,7 @@
 | 45 条拦截用例逐条后（独立 mysql 客户端交叉核对） | 12/2/11/0/0 | 45/45 全部 match | PASS |
 | 全部验证结束后整体复核 | 同上 | 12/2/11/0/0（两客户端一致） | PASS |
 | 残留表检测（zz_probe/sale_pay_bak/t_x/sale_pay_tmp/probe_tbl） | count=0 | 0 | PASS |
-| 二进制 SHA256 前后一致 | 未变化 | 未变化（7C0A02C9122730BB...） | PASS |
+| 二进制 SHA256 前后一致 | 未变化 | 未变化（612C93F579391C25...） | PASS |
 
 ## 7. 行数限制（硬性需求，SPEC §3 / §8.5）
 
@@ -282,15 +317,15 @@
 
 | 用例 | 期望 | 实际（摘要） | 结论 |
 | --- | --- | --- | --- |
-| row-default | 默认上限 20 行；stderr 含 `truncated to 20 row(s)` | exit=0 rows=20; stderr: [mysqlq] 20 row(s) in 24ms \| [mysqlq] truncated to 20 row(s) (--max-rows) \| | PASS |
-| row-max5 | `--max-rows 5` → 恰好 5 行；stderr 含 truncated to 5 | exit=0 rows=5; stderr: [mysqlq] 5 row(s) in 22ms \| [mysqlq] truncated to 5 row(s) (--max-rows) \| | PASS |
-| row-max100 | `--max-rows 100` → 恰好 100 行；stderr 含 truncated to 100 | exit=0 rows=100; stderr: [mysqlq] 100 row(s) in 23ms \| [mysqlq] truncated to 100 row(s) (--max-rows) \| | PASS |
+| row-default | 默认上限 20 行；stderr 含 `truncated to 20 row(s)` | exit=0 rows=20; stderr: [mysqlq] 20 row(s) in 22ms \| [mysqlq] truncated to 20 row(s) (--max-rows) \| | PASS |
+| row-max5 | `--max-rows 5` → 恰好 5 行；stderr 含 truncated to 5 | exit=0 rows=5; stderr: [mysqlq] 5 row(s) in 23ms \| [mysqlq] truncated to 5 row(s) (--max-rows) \| | PASS |
+| row-max100 | `--max-rows 100` → 恰好 100 行；stderr 含 truncated to 100 | exit=0 rows=100; stderr: [mysqlq] 100 row(s) in 21ms \| [mysqlq] truncated to 100 row(s) (--max-rows) \| | PASS |
 | row-config5 | 配置 `max_rows: 5` → 恰好 5 行 | exit=0 rows=5; stderr: [mysqlq] 5 row(s) in 22ms \| [mysqlq] truncated to 5 row(s) (--max-rows) \| | PASS |
-| row-config500-clamp | 配置 `max_rows: 500` → 钳制 100 行；stderr 有 warning（原文 `max_rows 500 in config exceeds the hard limit 100, using 100`） | exit=0 rows=100; stderr: [mysqlq] warning: max_rows 500 in config exceeds the hard limit 100, using 100 \| [mysqlq] 100 row(s) in 23ms \| [mysqlq] ... | PASS |
-| row-cli-over-config | `--max-rows 50` > 配置 500 → 50 行 | exit=0 rows=50; stderr: [mysqlq] warning: max_rows 500 in config exceeds the hard limit 100, using 100 \| [mysqlq] 50 row(s) in 25ms \| [mysqlq] t... | PASS |
-| row-config500-cli100 | 配置 500 + `--max-rows 100` → 100 行（硬上限） | exit=0 rows=100; stderr: [mysqlq] warning: max_rows 500 in config exceeds the hard limit 100, using 100 \| [mysqlq] 100 row(s) in 26ms \| [mysqlq] ... | PASS |
-| row-info5 | `info` 的 default_max_rows 反映配置（5） | exit=0; stdout=390B; stderr: [mysqlq] 10 row(s) in 0ms \| | PASS |
-| row-info500 | `info` 的 default_max_rows 反映钳制结果（100）且 stderr 有 warning | exit=0; stdout=396B; stderr: [mysqlq] warning: max_rows 500 in config exceeds the hard limit 100, using 100 \| [mysqlq] 10 row(s) in 0ms \| | PASS |
+| row-config500-clamp | 配置 `max_rows: 500` → 钳制 100 行；stderr 有 warning（原文 `max_rows 500 in config exceeds the hard limit 100, using 100`） | exit=0 rows=100; stderr: [mysqlq] warning: max_rows 500 in config exceeds the hard limit 100, using 100 \| [mysqlq] 100 row(s) in 22ms \| [mysqlq] ... | PASS |
+| row-cli-over-config | `--max-rows 50` > 配置 500 → 50 行 | exit=0 rows=50; stderr: [mysqlq] warning: max_rows 500 in config exceeds the hard limit 100, using 100 \| [mysqlq] 50 row(s) in 23ms \| [mysqlq] t... | PASS |
+| row-config500-cli100 | 配置 500 + `--max-rows 100` → 100 行（硬上限） | exit=0 rows=100; stderr: [mysqlq] warning: max_rows 500 in config exceeds the hard limit 100, using 100 \| [mysqlq] 100 row(s) in 22ms \| [mysqlq] ... | PASS |
+| row-info5 | `info` 的 default_max_rows 反映配置（5） | exit=0; stdout=390B; stderr: [mysqlq] 10 row(s) in 0ms | PASS |
+| row-info500 | `info` 的 default_max_rows 反映钳制结果（100）且 stderr 有 warning | exit=0; stdout=396B; stderr: [mysqlq] warning: max_rows 500 in config exceeds the hard limit 100, using 100 \| [mysqlq] 10 row(s) in 0ms | PASS |
 | row-no-combo-over-100 | 任何 flag/config 组合都 ≤ 100 行 | max observed <= 100; default=20 | PASS |
 
 `--max-rows 101` / `0` / `-1` 均按 SPEC exit 2（见 §4 退出码表）。结论：默认 20、`--max-rows` 5/100、config 5/500 钳制、组合优先级全部正确，**任何组合均未超过 100 行**。
@@ -299,8 +334,8 @@
 
 | 用例 | 期望 | 实际（摘要） | 结论 |
 | --- | --- | --- | --- |
-| timeout-sleep | `SELECT SLEEP(5)` + `--timeout 1s` → exit 1，stderr 说明超时，stdout 为空，无 `[mysql]` 驱动日志，实际耗时约 1.0s | exit=1 stdout=0B ms=1037 stderr: mysqlq: error: query timed out after 1s (increase --timeout if the query is expected to be slow) \| | PASS |
-| timeout-cartesian | 3 表笛卡尔积 + `--timeout 1s` → exit 1，同样干净 | exit=1 stdout=0B ms=1038 stderr: mysqlq: error: query timed out after 1s (increase --timeout if the query is expected to be slow) \| | PASS |
+| timeout-sleep | `SELECT SLEEP(5)` + `--timeout 1s` → exit 1，stderr 说明超时，stdout 为空，无 `[mysql]` 驱动日志，实际耗时约 1.0s | exit=1 stdout=0B ms=1042 stderr: mysqlq: error: query timed out after 1s (increase --timeout if the query is expected to be slow) \| | PASS |
+| timeout-cartesian | 3 表笛卡尔积 + `--timeout 1s` → exit 1，同样干净 | exit=1 stdout=0B ms=1054 stderr: mysqlq: error: query timed out after 1s (increase --timeout if the query is expected to be slow) \| | PASS |
 
 实测 stderr 原文：`mysqlq: error: query timed out after 1s (increase --timeout if the query is expected to be slow)`；stdout 字节数 0；stderr 中**没有** `[mysql]` 驱动内部日志（如 `packets.go`、`read tcp` 等），错误信息可读。
 
@@ -310,19 +345,19 @@
 
 | 用例 | 期望 | 实际（摘要） | 结论 |
 | --- | --- | --- | --- |
-| fp-01 | SELECT 中含字符串字面量 `DELETE FROM sale_pay` / `UPDATE ...` → 正常返回（字面量不参与关键字判断） | exit=0; stdout=116B; stderr: [mysqlq] 1 row(s) in 1ms \| | PASS |
-| fp-02 | 反引号标识符 `` SELECT `id` FROM `sale_pay` `` → 正常返回 2 行 | exit=0; stdout=18B; stderr: [mysqlq] 2 row(s) in 0ms \| | PASS |
-| fp-03 | 反引号别名含关键字 `` AS `insert` `` / `` AS `delete` `` → 正常 | exit=0; stdout=45B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
-| fp-04 | `/*+ MAX_EXECUTION_TIME(1000) */` optimizer hint 允许（按普通注释跳过） | exit=0; stdout=29B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
-| fp-05 | `EXPLAIN SELECT * FROM sale_pay` → 正常返回执行计划 | exit=0; stdout=308B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
-| fp-06 | `SHOW TABLES` → 正常返回 12 行 | exit=0; stdout=213B; stderr: [mysqlq] 12 row(s) in 1ms \| | PASS |
-| fp-07 | `DESC sale_pay` → 正常返回 18 行 | exit=0; stdout=1225B; stderr: [mysqlq] 18 row(s) in 2ms \| | PASS |
-| fp-08 | `WITH ... SELECT` → 正常 | exit=0; stdout=23B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
-| fp-09 | 末尾单个分号 `SELECT 1 AS a;` → 正常 | exit=0; stdout=6B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
+| fp-01 | SELECT 中含字符串字面量 `DELETE FROM sale_pay` / `UPDATE ...` → 正常返回（字面量不参与关键字判断） | exit=0; stdout=116B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
+| fp-02 | 反引号标识符 `` SELECT `id` FROM `sale_pay` `` → 正常返回 2 行 | exit=0; stdout=18B; stderr: [mysqlq] 2 row(s) in 0ms | PASS |
+| fp-03 | 反引号别名含关键字 `` AS `insert` `` / `` AS `delete` `` → 正常 | exit=0; stdout=45B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
+| fp-04 | `/*+ MAX_EXECUTION_TIME(1000) */` optimizer hint 允许（按普通注释跳过） | exit=0; stdout=29B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
+| fp-05 | `EXPLAIN SELECT * FROM sale_pay` → 正常返回执行计划 | exit=0; stdout=308B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
+| fp-06 | `SHOW TABLES` → 正常返回 12 行 | exit=0; stdout=213B; stderr: [mysqlq] 12 row(s) in 2ms | PASS |
+| fp-07 | `DESC sale_pay` → 正常返回 18 行 | exit=0; stdout=1225B; stderr: [mysqlq] 18 row(s) in 2ms | PASS |
+| fp-08 | `WITH ... SELECT` → 正常 | exit=0; stdout=23B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
+| fp-09 | 末尾单个分号 `SELECT 1 AS a;` → 正常 | exit=0; stdout=6B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
 | fp-10 | `SHOW CREATE TABLE` 被拦截（含 CREATE 关键字），且提示 `use "mysqlq ddl <table>"` | exit=3; stdout=0B; stderr: mysqlq: blocked: statement contains forbidden keyword "CREATE"; this tool only allows read-only queries (use "my... | PASS |
-| fp-11 | `--` 终止符：之前的 `--format json` 生效，之后的 SQL 按位置参数处理（含 `-- note` 注释后 SELECT 正常） | exit=0; stdout=35B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
-| fp-12 | 仅注释的 SQL → 视为空语句拦截 exit 3 | exit=3; stdout=0B; stderr: mysqlq: blocked: empty statement \| | PASS |
-| fp-13 | 纵深防御：查询内 `@@transaction_read_only`=1、`@@max_execution_time`=10000（服务端只读会话） | exit=0; stdout=42B; stderr: [mysqlq] 1 row(s) in 0ms \| | PASS |
+| fp-11 | `--` 终止符：之前的 `--format json` 生效，之后的 SQL 按位置参数处理（含 `-- note` 注释后 SELECT 正常） | exit=0; stdout=35B; stderr: [mysqlq] 1 row(s) in 0ms | PASS |
+| fp-12 | 仅注释的 SQL → 视为空语句拦截 exit 3 | exit=3; stdout=0B; stderr: mysqlq: blocked: empty statement | PASS |
+| fp-13 | 纵深防御：查询内 `@@transaction_read_only`=1、`@@max_execution_time`=10000（服务端只读会话） | exit=0; stdout=42B; stderr: [mysqlq] 1 row(s) in 1ms | PASS |
 
 ### 9.1 纵深防御证据（SPEC §6.3）
 
@@ -363,10 +398,13 @@
 
 > 说明：上述 5 条均已纳入 `scripts/verify/verify.ps1` 的回归用例，重跑后全部 PASS；同时按“每个用例只断言一件事”的原则拆分了 exit code 与格式形状断言。
 
+本轮（task-3）另有 3 条旧用例因部署布局/配置解析方式变更而**失效并被替换**（非工具缺陷）：`config/cfg-cwd`（旧行为：cwd 配置优先）→ 改为 `config-order/ord-03`（exe 同目录优先）；`config/cfg-env-over-cwd` → `config-order/ord-09`（env 优先于 cwd 兜底）；`config/cfg-parent-fallback`（旧 `../config.yaml` 兜底）→ `config-order/ord-11`（确认已移除）。替换后全部 PASS。
+
 ## 12. 交付结论
 
 - **总体结论：可交付（PASS）**。
-- 规格 §8 验收标准逐项满足：`bin\mysqlq.exe` 可用；`info` 正确显示 8.0.33/bbc 且不泄露密码；全部命令正常、四种格式合法；§7 拦截矩阵逐条 exit 3 且数据零变化；行数限制（默认 20、config 5、config 500→100 钳制、`--max-rows 101`→exit 2、任何组合 ≤100）全部满足；`--help` 可用、未知命令 exit 2。
+- 本轮变更复核通过：构建产物位于仓库根目录 `mysqlq.exe`（`bin/` 已删除，根目录即部署目录，`config.yaml`/`config.example.yaml`/`SKILL.md` 同级）；配置默认读取 exe 同目录 `config.yaml`、与 cwd 无关，exe 同目录优先于 cwd，`--config`/`MYSQLQ_CONFIG` 覆盖顺序正确，旧 `../config.yaml` 兜底确已移除，无配置时报错清晰。
+- 规格 §8 验收标准逐项满足：`mysqlq.exe` 可用；`info` 正确显示 8.0.33/bbc 且不泄露密码；全部命令正常、四种格式合法；§7 拦截矩阵逐条 exit 3 且数据零变化；行数限制（默认 20、config 5、config 500→100 钳制、`--max-rows 101`→exit 2、任何组合 ≤100）全部满足；`--help` 可用、未知命令 exit 2。
 - 唯一遗留为 **[MINOR] CSV 的 `#` 表头在 PowerShell `Import-Csv` 下的互操作提示**（数据本身 RFC4180 合法），不影响交付判定，建议后续迭代或在使用文档中提示。
 - 未发现 [BLOCKER]。本次验证未修改任何源码、配置与文档（除本报告与 `scripts/verify/**`）。
 
@@ -376,8 +414,9 @@
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify\verify.ps1
 ```
 
-- `scripts/verify/verify.ps1`：可重复执行的完整验证脚本（纯 ASCII，Windows PowerShell 5.1 兼容；不写数据库，只读）。
-- `scripts/verify/last-run.log` / `scripts/verify/last-run.md`：最近一次运行的 326 例逐条原始证据（命令 / 期望 / 实际 / 结论）。
+- `scripts/verify/verify.ps1`：可重复执行的完整验证脚本（纯 ASCII，Windows PowerShell 5.1 兼容；不写数据库，只读；覆盖根目录 `mysqlq.exe` 与配置查找顺序专项）。
+- `scripts/verify/last-run.log` / `scripts/verify/last-run.md`：最近一次运行的 338 例逐条原始证据（命令 / 期望 / 实际 / 结论）。
+- `scripts/verify/gen_report.py`：由上述证据日志生成本报告的脚本（便于复跑后一键刷新）。
 
 ---
 

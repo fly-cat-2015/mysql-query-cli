@@ -9,10 +9,16 @@
 
   Behaviour:
     - Never writes to the database, never touches the Go sources, config.yaml,
-      SKILL.md, README.md, docs/SPEC.md, bin/ or scripts/acceptance.ps1.
+      SKILL.md, README.md, docs/SPEC.md, mysqlq.exe or scripts/acceptance.ps1.
     - Writes only scripts/verify/tmp/* (regenerated) and the two evidence files
       scripts/verify/last-run.log / scripts/verify/last-run.md.
     - Exit code: 0 = all checks passed, 1 = at least one FAIL, 2 = preflight failure.
+
+  Deployment layout (SPEC section 1): the binary lives at the repository root
+  (mysqlq.exe) next to config.yaml / config.example.yaml / SKILL.md; bin/ no
+  longer exists. Config lookup order (SPEC section 2):
+    --config > $MYSQLQ_CONFIG > <dir of mysqlq.exe>/config.yaml > ./config.yaml,
+  i.e. independent of the current working directory.
 
   Output capture uses System.Diagnostics.Process instead of the call operator
   because PowerShell 5.1 wraps native stderr into ErrorRecord text when using
@@ -22,7 +28,7 @@
 $ErrorActionPreference = 'Continue'
 
 $script:Root       = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$script:Bin        = Join-Path $script:Root 'bin\mysqlq.exe'
+$script:Bin        = Join-Path $script:Root 'mysqlq.exe'
 $script:ConfigPath = Join-Path $script:Root 'config.yaml'
 $script:Tmp        = Join-Path $PSScriptRoot 'tmp'
 $script:MysqlClient = $null
@@ -57,11 +63,14 @@ function Invoke-Mysqlq {
     [string]$StdinText = $null,
     [string]$WorkDir = $null,
     [hashtable]$EnvMap = $null,
+    [string]$Exe = $null,
     [int]$HardMs = 60000
   )
   if (-not $WorkDir) { $WorkDir = $script:Root }
+  $exePath = $script:Bin
+  if ($Exe) { $exePath = (Resolve-Path -LiteralPath $Exe).Path }
   $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = $script:Bin
+  $psi.FileName = $exePath
   $psi.Arguments = (($ArgList | ForEach-Object { Quote-Arg $_ }) -join ' ')
   $psi.UseShellExecute = $false
   $psi.RedirectStandardOutput = $true
@@ -193,6 +202,15 @@ function Get-Short([string]$Text, [int]$Max = 160) {
   return $t
 }
 
+function Get-InfoFacts([string]$Out) {
+  $facts = @{}
+  foreach ($line in ($Out -split "`r?`n")) {
+    $m = [regex]::Match($line, '^(\S+)\s{2,}(.*)$')
+    if ($m.Success) { $facts[$m.Groups[1].Value] = $m.Groups[2].Value.Trim() }
+  }
+  return $facts
+}
+
 function Test-Mysqlq {
   param(
     [string]$Group,
@@ -210,9 +228,11 @@ function Test-Mysqlq {
     [string]$StdinText = $null,
     [hashtable]$EnvMap = $null,
     [string]$WorkDir = $null,
+    [string]$Exe = $null,
+    [switch]$CaptureInfo,
     [int]$HardMs = 60000
   )
-  $r = Invoke-Mysqlq -ArgList $ArgList -StdinText $StdinText -WorkDir $WorkDir -EnvMap $EnvMap -HardMs $HardMs
+  $r = Invoke-Mysqlq -ArgList $ArgList -StdinText $StdinText -WorkDir $WorkDir -EnvMap $EnvMap -Exe $Exe -HardMs $HardMs
   $problems = @()
   if ($ExpCode -notcontains $r.Code) { $problems += ('exit=' + $r.Code + ' expected ' + ($ExpCode -join '/')) }
   foreach ($m in $OutMust) { if (-not $r.Out.Contains($m)) { $problems += ('stdout missing "' + $m + '"') } }
@@ -221,7 +241,19 @@ function Test-Mysqlq {
   foreach ($m in $ErrMustNot) { if ($r.Err.Contains($m)) { $problems += ('stderr contains "' + $m + '"') } }
   if ($EmptyOut -and $r.Out.Trim().Length -ne 0) { $problems += ('stdout not empty (' + $r.Out.Length + ' bytes)') }
   if ($NonEmptyOut -and $r.Out.Trim().Length -eq 0) { $problems += 'stdout empty' }
-  $actual = 'exit=' + $r.Code + '; stdout=' + $r.Out.Length + 'B; stderr: ' + (Get-Short $r.Err 170)
+  $errShort = (Get-Short $r.Err 170).TrimEnd(' ', '|')
+  $actual = 'exit=' + $r.Code + '; stdout=' + $r.Out.Length + 'B; stderr: ' + $errShort
+  if ($CaptureInfo) {
+    $fct = Get-InfoFacts $r.Out
+    $cf = [string]$fct['config_file']
+    if ($cf) {
+      $cfBrief = $cf
+      if ($cfBrief.Length -gt 110) { $cfBrief = '...' + $cfBrief.Substring($cfBrief.Length - 107) }
+      $actual += '; config_file=' + $cfBrief + '; database=' + $fct['database'] + '; max_rows=' + $fct['default_max_rows']
+    } else {
+      $actual += '; config_file=(no info output)'
+    }
+  }
   [void](Add-Result -Group $Group -Id $Id -Desc $Desc -Cmd (Format-Cmd $ArgList) -Expect $Expect -Actual $actual -Ok ($problems.Count -eq 0) -Detail ($problems -join '; '))
   return $r
 }
@@ -391,7 +423,9 @@ Write-Host ''
 # ----------------------------------------------------------------------------
 
 $script:Group = 'env'
-[void](Add-Result -Group 'env' -Id 'env-01' -Desc 'binary present and executable' -Cmd 'Test-Path bin\mysqlq.exe' -Expect 'exists, >1MB' -Actual ($binInfo.Length.ToString() + ' bytes') -Ok ($binInfo.Length -gt 100000))
+[void](Add-Result -Group 'env' -Id 'env-01' -Desc 'binary present and executable at repository root (deployment dir)' -Cmd 'Test-Path mysqlq.exe' -Expect 'exists, >1MB' -Actual ($binInfo.Length.ToString() + ' bytes') -Ok ($binInfo.Length -gt 100000))
+$binDirExists = Test-Path -LiteralPath (Join-Path $script:Root 'bin')
+[void](Add-Result -Group 'env' -Id 'env-04' -Desc 'no bin/ directory (build output moved to repo root)' -Cmd 'Test-Path bin' -Expect 'bin/ removed' -Actual ('bin exists=' + $binDirExists) -Ok (-not $binDirExists))
 [void](Add-Result -Group 'env' -Id 'env-02' -Desc 'server is MySQL 8.0.33' -Cmd 'mysql.exe -e "SELECT VERSION()"' -Expect '8.0.33' -Actual $serverVersion -Ok ($serverVersion -eq '8.0.33'))
 [void](Add-Result -Group 'env' -Id 'env-03' -Desc 'independent mysql client available (extra integrity cross-check)' -Cmd 'Find-MysqlClient' -Expect 'mysql.exe found' -Actual $mysqlVersionLine -Ok ([bool]$script:MysqlClient))
 
@@ -731,9 +765,6 @@ $cfgCwdB = New-TempConfig 'cwd_b\config.yaml' @{ db_host = '127.0.0.1'; db_name 
 $r = Test-Mysqlq -Group 'config' -Id 'cfg-explicit' -Desc '--config explicit path is used (config_file + default_max_rows)' -ArgList @('--config', $cfg5, 'info') -Expect 'config_file = cfg5, default_max_rows = 5' -OutMust @($cfg5, 'default_max_rows  5')
 $r = Test-Mysqlq -Group 'config' -Id 'cfg-env-config' -Desc 'MYSQLQ_CONFIG env selects config file' -ArgList @('info') -EnvMap @{ MYSQLQ_CONFIG = $cfg5 } -Expect 'config_file = cfg5, default_max_rows = 5' -OutMust @($cfg5, 'default_max_rows  5')
 $r = Test-Mysqlq -Group 'config' -Id 'cfg-cli-over-env' -Desc '--config beats MYSQLQ_CONFIG' -ArgList @('--config', $cfgQ, 'info') -EnvMap @{ MYSQLQ_CONFIG = $cfg5 } -Expect 'config_file = cfgQ (max_rows 9), not cfg5' -OutMust @($cfgQ, 'default_max_rows  9') -OutMustNot @('cfg_max5.yaml')
-$r = Test-Mysqlq -Group 'config' -Id 'cfg-cwd' -Desc './config.yaml in cwd is used when no --config/MYSQLQ_CONFIG' -ArgList @('info') -WorkDir $cwdA -Expect 'config_file = cwd_a\config.yaml, max_rows 7' -OutMust @($cfgCwdA, 'default_max_rows  7')
-$r = Test-Mysqlq -Group 'config' -Id 'cfg-env-over-cwd' -Desc 'MYSQLQ_CONFIG beats cwd config.yaml' -ArgList @('info') -WorkDir $cwdA -EnvMap @{ MYSQLQ_CONFIG = $cfgCwdB } -Expect 'config_file = cwd_b config, max_rows 9' -OutMust @($cfgCwdB, 'default_max_rows  9') -OutMustNot @('cwd_a')
-$r = Test-Mysqlq -Group 'config' -Id 'cfg-parent-fallback' -Desc 'exe-dir parent fallback: from bin/ the root config.yaml is found' -ArgList @('info') -WorkDir (Join-Path $script:Root 'bin') -Expect 'finds root config.yaml' -OutMust @($script:ConfigPath)
 [void](Test-Mysqlq -Group 'config' -Id 'cfg-quoted' -Desc 'quoted password value parses and connects' -ArgList @('--config', $cfgQ, '--format', 'json', 'query', 'SELECT 1 AS ok') -Expect 'exit 0, connects' -OutMust @('"ok": 1'))
 [void](Test-Mysqlq -Group 'config' -Id 'cfg-unknown-key' -Desc 'unknown config key is ignored' -ArgList @('--config', $cfgUnknown, '--format', 'json', 'query', 'SELECT 1 AS ok') -Expect 'exit 0' -OutMust @('"ok": 1'))
 [void](Test-Mysqlq -Group 'config' -Id 'cfg-bad-maxrows' -Desc 'non-integer max_rows -> config error exit 1 with legal range' -ArgList @('--config', $cfgBad, 'info') -ExpCode @(1) -Expect 'exit 1, stderr config + max_rows + 1 and 100' -ErrMust @('config', 'max_rows', '1 and 100') -EmptyOut)
@@ -751,6 +782,82 @@ $r = Test-Mysqlq -Group 'config' -Id 'cfg-db-over-env' -Desc '--db beats MYSQLQ_
 $r = Test-Mysqlq -Group 'config' -Id 'cfg-db-funds' -Desc '--db funds works on a second real database' -ArgList @('--db', 'funds', '--format', 'json', 'query', 'SELECT DATABASE() AS db') -Expect 'db = funds' -OutMust @('"db": "funds"')
 $rleak = Invoke-Mysqlq -ArgList @('info') -EnvMap @{ MYSQLQ_PORT = '3399' }
 [void](Add-Result -Group 'config' -Id 'cfg-env-port' -Desc 'MYSQLQ_PORT env override takes effect (bad port -> exit 1)' -Cmd 'MYSQLQ_PORT=3399 mysqlq.exe info' -Expect 'exit 1 connection error' -Actual ('exit=' + $rleak.Code) -Ok ($rleak.Code -eq 1))
+
+# ----------------------------------------------------------------------------
+# group: config-order (new deployment layout / SPEC section 2 lookup order)
+#   1) --config   2) $MYSQLQ_CONFIG   3) <dir of mysqlq.exe>/config.yaml   4) ./config.yaml
+#   The ../config.yaml fallback used by the old layout must be gone.
+# ----------------------------------------------------------------------------
+
+$script:Group = 'config-order'
+$foreignCwd = Join-Path $script:Tmp 'foreign_cwd'
+$emptyCwd   = Join-Path $script:Tmp 'empty_cwd'
+[void](New-Item -ItemType Directory -Path $foreignCwd -Force)
+[void](New-Item -ItemType Directory -Path $emptyCwd -Force)
+
+# a copied deployment directory: mysqlq.exe + config.yaml together (relocatable deployment)
+$deployDir = Join-Path $script:Tmp 'deploy_dir'
+[void](New-Item -ItemType Directory -Path $deployDir -Force)
+Copy-Item -LiteralPath $script:Bin -Destination (Join-Path $deployDir 'mysqlq.exe') -Force
+$deployExe = Join-Path $deployDir 'mysqlq.exe'
+$cfgDeploy = New-TempConfig 'deploy_dir\config.yaml' @{ db_host = '127.0.0.1'; db_name = 'funds'; db_user = 'root'; db_passwd = 'root'; max_rows = '11' }
+
+# a copied exe with no config next to it (used to exercise the ./config.yaml fallback)
+$exeNoCfgDir = Join-Path $script:Tmp 'exe_nocfg'
+[void](New-Item -ItemType Directory -Path $exeNoCfgDir -Force)
+Copy-Item -LiteralPath $script:Bin -Destination (Join-Path $exeNoCfgDir 'mysqlq.exe') -Force
+$exeNoCfg = Join-Path $exeNoCfgDir 'mysqlq.exe'
+
+# a config that exists ONLY in the parent directory of the cwd (old ../config.yaml fallback)
+$parentOnlyRoot = Join-Path $script:Tmp 'parent_only'
+$parentOnlyChild = Join-Path $parentOnlyRoot 'child'
+[void](New-Item -ItemType Directory -Path $parentOnlyChild -Force)
+$cfgParentOnly = New-TempConfig 'parent_only\config.yaml' @{ db_host = '127.0.0.1'; db_name = 'bbc'; db_user = 'root'; db_passwd = 'root'; max_rows = '3' }
+
+# ord-01: default = config.yaml next to the exe, even when cwd is somewhere else
+$r = Test-Mysqlq -Group 'config-order' -Id 'ord-01' -Desc 'default: exe-dir config.yaml is used from an unrelated cwd' -ArgList @('info') -WorkDir $foreignCwd -Expect 'config_file = repo-root config.yaml, database bbc, default_max_rows 20' -OutMust @($script:ConfigPath, 'database          bbc', 'default_max_rows  20') -CaptureInfo
+
+# ord-02: same, but cwd is a real %TEMP% subdirectory (lead scenario)
+$realTempCwd = Join-Path $env:TEMP ('mysqlq_verify_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+[void](New-Item -ItemType Directory -Path $realTempCwd -Force)
+$r = Test-Mysqlq -Group 'config-order' -Id 'ord-02' -Desc 'default: exe-dir config is used from a %TEMP% cwd' -ArgList @('info') -WorkDir $realTempCwd -Expect 'config_file = repo-root config.yaml (cwd-independent)' -OutMust @($script:ConfigPath, 'database          bbc') -CaptureInfo
+Remove-Item -LiteralPath $realTempCwd -Recurse -Force -ErrorAction SilentlyContinue
+
+# ord-03: exe-dir config beats a decoy ./config.yaml in the current directory
+$r = Test-Mysqlq -Group 'config-order' -Id 'ord-03' -Desc 'exe-dir config.yaml beats cwd config.yaml' -ArgList @('info') -WorkDir $cwdA -Expect 'root config (max_rows 20) wins, cwd_a config (max_rows 7) ignored' -OutMust @($script:ConfigPath, 'default_max_rows  20') -OutMustNot @('cwd_a') -CaptureInfo
+
+# ord-04: relocatable deployment dir: copied exe + its own config, called from the repo root
+$r = Test-Mysqlq -Group 'config-order' -Id 'ord-04' -Desc 'copied deployment dir: its own config.yaml is used, not cwd config' -ArgList @('info') -Exe $deployExe -WorkDir $script:Root -Expect 'config_file = deploy_dir\config.yaml, database funds, max_rows 11' -OutMust @($cfgDeploy, 'database          funds', 'default_max_rows  11') -OutMustNot @($script:ConfigPath) -CaptureInfo
+
+# ord-05: deploy-dir config still wins against a different cwd config (max_rows 11 vs 9)
+$r = Test-Mysqlq -Group 'config-order' -Id 'ord-05' -Desc 'relocated deployment works from another cwd (exe dir wins again)' -ArgList @('info') -Exe $deployExe -WorkDir $cwdB -Expect 'deploy config max_rows 11 wins over cwd_b max_rows 9' -OutMust @($cfgDeploy, 'default_max_rows  11') -OutMustNot @('cwd_b') -CaptureInfo
+
+# ord-06: --config overrides the exe-dir config
+$r = Test-Mysqlq -Group 'config-order' -Id 'ord-06' -Desc '--config overrides the exe-dir config.yaml' -ArgList @('--config', $cfg5, 'info') -Exe $deployExe -WorkDir $script:Root -Expect 'config_file = cfg5 (max_rows 5), deploy config ignored' -OutMust @($cfg5, 'default_max_rows  5') -OutMustNot @($cfgDeploy) -CaptureInfo
+
+# ord-07: $MYSQLQ_CONFIG overrides the exe-dir config
+$r = Test-Mysqlq -Group 'config-order' -Id 'ord-07' -Desc 'MYSQLQ_CONFIG overrides the exe-dir config.yaml' -ArgList @('info') -EnvMap @{ MYSQLQ_CONFIG = $cfg5 } -Exe $deployExe -WorkDir $script:Root -Expect 'config_file = cfg5 (max_rows 5)' -OutMust @($cfg5, 'default_max_rows  5') -OutMustNot @($cfgDeploy) -CaptureInfo
+
+# ord-08: ./config.yaml fallback (go run scenario: no config next to the exe)
+$r = Test-Mysqlq -Group 'config-order' -Id 'ord-08' -Desc 'cwd fallback: ./config.yaml used when the exe dir has none' -ArgList @('info') -Exe $exeNoCfg -WorkDir $cwdA -Expect 'config_file = cwd_a\config.yaml (max_rows 7)' -OutMust @($cfgCwdA, 'default_max_rows  7') -CaptureInfo
+
+# ord-09: $MYSQLQ_CONFIG beats the cwd fallback
+$r = Test-Mysqlq -Group 'config-order' -Id 'ord-09' -Desc 'MYSQLQ_CONFIG beats the ./config.yaml fallback' -ArgList @('info') -EnvMap @{ MYSQLQ_CONFIG = $cfg5 } -Exe $exeNoCfg -WorkDir $cwdA -Expect 'config_file = cfg5 (max_rows 5), cwd_a config ignored' -OutMust @($cfg5, 'default_max_rows  5') -OutMustNot @('cwd_a') -CaptureInfo
+
+# ord-10: nothing found anywhere -> exit 1 with an actionable message
+$r = Test-Mysqlq -Group 'config-order' -Id 'ord-10' -Desc 'no config file anywhere -> exit 1 with actionable message' -ArgList @('info') -Exe $exeNoCfg -WorkDir $emptyCwd -ExpCode @(1) -Expect 'exit 1, stderr "no config file found", mentions next-to-exe and --config' -ErrMust @('no config file found', 'next to mysqlq.exe', '--config') -EmptyOut
+[void](Add-Result -Group 'config-order' -Id 'ord-10b' -Desc 'no-config message does not leak credentials' -Cmd 'mysqlq.exe info (isolated, no config)' -Expect 'no credential pattern in stderr' -Actual ('stderr=' + (Get-Short $r.Err 100)) -Ok ((-not $r.Err.Contains('root:root')) -and (-not $r.Err.Contains('db_passwd:'))))
+
+# ord-11: old ../config.yaml fallback must be gone
+$r = Test-Mysqlq -Group 'config-order' -Id 'ord-11' -Desc 'old ../config.yaml fallback is removed (config only in parent dir)' -ArgList @('info') -Exe $exeNoCfg -WorkDir $parentOnlyChild -ExpCode @(1) -Expect 'exit 1: ../config.yaml must NOT be loaded any more' -ErrMust @('no config file found') -EmptyOut
+[void](Add-Result -Group 'config-order' -Id 'ord-11b' -Desc 'parent-dir config path never appears in output' -Cmd 'mysqlq.exe info (cwd child, config only in ../)' -Expect 'stdout+stderr do not reference the parent config' -Actual ('references=' + (($r.Out + $r.Err).Contains($cfgParentOnly))) -Ok (-not ($r.Out + $r.Err).Contains($cfgParentOnly)))
+
+# ord-12: whole deployment dir copied elsewhere remains usable (exe + config move together)
+$movedDir = Join-Path $script:Tmp 'moved_deploy'
+[void](New-Item -ItemType Directory -Path $movedDir -Force)
+Copy-Item -LiteralPath $deployExe -Destination (Join-Path $movedDir 'mysqlq.exe') -Force
+Copy-Item -LiteralPath $cfgDeploy -Destination (Join-Path $movedDir 'config.yaml') -Force
+$r = Test-Mysqlq -Group 'config-order' -Id 'ord-12' -Desc 'deployment directory is relocatable (exe+config moved together)' -ArgList @('--format', 'json', 'query', 'SELECT DATABASE() AS db, @@port AS port') -Exe (Join-Path $movedDir 'mysqlq.exe') -WorkDir $foreignCwd -Expect 'exit 0, db=funds from moved config' -OutMust @('"db": "funds"')
 
 # ----------------------------------------------------------------------------
 # group: guard (read-only intercept matrix) + integrity after each
@@ -925,7 +1032,7 @@ $f = Get-Integrity 'final'
 [void](Assert-Integrity -Group 'integrity' -Id 'int-final' -Context 'entire verification run')
 
 $binHash2 = (Get-FileHash -LiteralPath $script:Bin -Algorithm SHA256).Hash
-[void](Add-Result -Group 'baseline' -Id 'base-04' -Desc 'binary was not rebuilt or replaced during verification' -Cmd 'Get-FileHash bin\mysqlq.exe' -Expect ('sha256 unchanged (' + $binHash.Substring(0, 16) + '...)') -Actual ($binHash2.Substring(0, 16) + '... ' + $(if ($binHash -eq $binHash2) { 'unchanged' } else { 'CHANGED' })) -Ok ($binHash -eq $binHash2))
+[void](Add-Result -Group 'baseline' -Id 'base-04' -Desc 'binary was not rebuilt or replaced during verification' -Cmd 'Get-FileHash mysqlq.exe' -Expect ('sha256 unchanged (' + $binHash.Substring(0, 16) + '...)') -Actual ($binHash2.Substring(0, 16) + '... ' + $(if ($binHash -eq $binHash2) { 'unchanged' } else { 'CHANGED' })) -Ok ($binHash -eq $binHash2))
 
 # ----------------------------------------------------------------------------
 # summary + evidence files
@@ -946,6 +1053,7 @@ $header += 'mysqlq black-box verification run'
 $header += 'time        : ' + $now
 $header += 'root        : ' + $script:Root
 $header += 'binary      : ' + $script:Bin
+$header += 'binary size : ' + $binInfo.Length
 $header += 'binary sha  : ' + $binHash
 $header += 'config      : ' + $script:ConfigPath
 $header += 'server      : ' + $serverVersion
@@ -971,7 +1079,8 @@ foreach ($rec in $all) {
 $md = @()
 $md += '# mysqlq verification - raw evidence (' + $now + ')'
 $md += ''
-$md += '- binary: `bin/mysqlq.exe` sha256 `' + $binHash + '`'
+$md += '- binary: `mysqlq.exe` (repo root / deployment dir) sha256 `' + $binHash + '`'
+$md += '- layout: mysqlq.exe + config.yaml + config.example.yaml + SKILL.md in one directory; bin/ removed'
 $md += '- config: `config.yaml`'
 $md += '- server: ' + $serverVersion
 $md += '- powershell: ' + $psVer

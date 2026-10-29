@@ -99,7 +99,7 @@ def main():
     fail_n = sum(1 for k in order if recs[k]['status'] == 'FAIL')
     meta = {}
     with io.open(LOG, 'r', encoding='utf-8-sig') as f:
-        for line in f.read().splitlines()[:10]:
+        for line in f.read().splitlines()[:14]:
             if ':' in line:
                 k, v = line.split(':', 1)
                 meta[k.strip()] = v.strip()
@@ -109,9 +109,11 @@ def main():
 
     A('# mysqlq 只读查询 CLI — 独立黑盒验证报告')
     A('')
-    A('> 验证对象：`E:\\code\\go\\mysql-query-cli`（二进制 `bin\\mysqlq.exe`）')
-    A('> 规格依据：`docs/SPEC.md`（§3 命令/参数、§4 输出格式、§5 退出码、§6 只读防护、§8 验收标准）')
+    A('> 验证对象：`E:\\code\\go\\mysql-query-cli`（二进制 `mysqlq.exe`，仓库根目录即部署目录）')
+    A('> 规格依据：`docs/SPEC.md`（§1 产物与目录布局、§2 配置查找顺序、§3 命令/参数、§4 输出格式、§5 退出码、§6 只读防护、§8 验收标准）')
     A('> 验证方式：**纯黑盒**。未读取、未修改任何 Go 源码；仅通过进程调用二进制并与独立 `mysql.exe` 客户端交叉核对数据。')
+    A('')
+    A('> 本轮（task-3）针对两处变更做了独立复核：①构建产物从 `bin\\mysqlq.exe` 迁移到仓库根目录 `mysqlq.exe`（`bin/` 已删除，根目录即部署目录）；②配置查找顺序改为 **`--config` > `$MYSQLQ_CONFIG` > 可执行文件同目录 `config.yaml` > `./config.yaml`**，去掉旧的 `../config.yaml` 兜底，默认读取与当前工作目录无关。')
     A('')
     A('## 0. 结论摘要')
     A('')
@@ -121,9 +123,10 @@ def main():
         ['WARN（互操作提示，非功能/安全缺陷）', str(warn_n)],
         ['FAIL', str(fail_n)],
         ['[BLOCKER]', '**0**'],
+        ['部署布局', '`mysqlq.exe` + `config.yaml` + `config.example.yaml` + `SKILL.md` 同级（仓库根目录）；`bin/` 已删除；配置默认读 exe 同目录，与 cwd 无关'],
         ['二进制 SHA256 是否在验证期间变化', '否（前后一致，`' + meta.get('binary sha', '')[:32] + '...`）'],
         ['拦截后数据/结构是否变化', '否（45 条拦截用例逐条双客户端核对 + 全量结束复核，均为 12/2/11/0/0）'],
-        ['**总体结论**', '**可交付（PASS）**：功能、退出码、四种格式、配置优先级、只读拦截、行数硬上限、超时防护均符合 SPEC；仅 2 项 CSV 互操作提示（见 §11），不影响数据安全与核心功能'],
+        ['**总体结论**', '**可交付（PASS）**：部署布局、配置解析顺序、功能、退出码、四种格式、只读拦截、行数硬上限、超时防护均符合 SPEC；仅 2 项 CSV 互操作提示（见 §10 MINOR-1），不影响数据安全与核心功能'],
     ]))
     A('')
     A('## 1. 环境与方法')
@@ -132,8 +135,9 @@ def main():
     A('')
     A(table(['项目', '值'], [
         ['主机/工作目录', '`' + meta.get('root', '') + '`'],
+        ['部署布局', '仓库根目录即部署目录：`mysqlq.exe`、`config.yaml`、`config.example.yaml`、`SKILL.md` 同级；`bin/` 已删除'],
         ['二进制', '`' + meta.get('binary', '') + '`'],
-        ['二进制大小', '8,228,352 字节'],
+        ['二进制大小', '{:,}'.format(int(meta.get('binary size', '0') or 0)) + ' 字节'],
         ['二进制 SHA256', '`' + meta.get('binary sha', '') + '`'],
         ['配置文件', '`' + meta.get('config', '') + '`（未修改）'],
         ['MySQL 服务器', meta.get('server', '') + '（127.0.0.1:3306，库 `bbc`，用户 root）'],
@@ -145,9 +149,10 @@ def main():
     A('')
     A('### 1.2 方法说明')
     A('')
-    A('- **黑盒约束**：全程只调用 `bin\\mysqlq.exe` 与独立 `mysql.exe`；未读取 `internal/`、`main.go` 等实现代码；未修改 `config.yaml`、`docs/SPEC.md`、`SKILL.md`、`README.md`、`scripts/acceptance.ps1`、`bin/`，写作用域仅 `scripts/verify/**` 与本文档。')
+    A('- **黑盒约束**：全程只调用根目录 `mysqlq.exe` 与独立 `mysql.exe`；未读取 `internal/`、`main.go` 等实现代码；未修改 `config.yaml`、`docs/SPEC.md`、`SKILL.md`、`README.md`、`scripts/acceptance.ps1`、根目录 `mysqlq.exe`，写作用域仅 `scripts/verify/**` 与本文档。')
     A('- **输出捕获**：使用 `System.Diagnostics.Process` 分别捕获 stdout/stderr（UTF-8 解码）。原因：PowerShell 5.1 用 `2> file` 会把原生进程 stderr 包装成 `NativeCommandError` 文本，污染“stderr 是否含 blocked / 是否出现驱动日志”的断言；同时 `&` 调用运算符在 PS 5.1 下会丢弃空字符串参数，无法构造“空语句”用例。')
-    A('- **每例证据**：命令、期望、实际（exit code + stdout 字节数 + stderr 摘要 + 关键 stdout 断言）、结论。完整 326 例原始证据见 `scripts/verify/last-run.log` / `scripts/verify/last-run.md`（由脚本自动生成、可重复执行）。')
+    A('- **每例证据**：命令、期望、实际（exit code + stdout 字节数 + stderr 摘要 + 关键 stdout 断言）、结论。完整 ' + str(total) + ' 例原始证据见 `scripts/verify/last-run.log` / `scripts/verify/last-run.md`（由脚本自动生成、可重复执行）。')
+    A('- **配置解析顺序（本轮新增重点）**：将 `mysqlq.exe`（或整个部署目录）复制到临时目录进行隔离验证：exe 同目录默认生效、exe 同目录优先于 cwd、`--config`/`MYSQLQ_CONFIG` 覆盖、无配置时的错误可达性、以及 `../config.yaml` 兜底确已移除；同时覆盖 `go run` 场景的 `./config.yaml` 兜底。')
     A('- **只读拦截后的完整性**：每条拦截用例后立即用 mysqlq 执行计数查询，并用独立 `mysql.exe` 再核对一次：表数量=12、`sale_pay`=2、`after_sale_reason`=11、`sale_pay_rel`=0、残留表=0；全部跑完后再整体复核一次。')
     A('- **二进制不可变性**：验证开始与结束各取一次 SHA256，确认期间无人重建二进制。')
     A('- **复现命令**：`powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\verify\\verify.ps1`（退出码 0=全部 PASS，1=存在 FAIL）。')
@@ -155,7 +160,7 @@ def main():
     A('### 1.3 结果分组统计')
     A('')
     stat_rows = []
-    for g in ['env', 'baseline', 'commands', 'formats', 'format-detail', 'exitcodes', 'config', 'guard', 'integrity', 'defense', 'limits', 'timeout']:
+    for g in ['env', 'baseline', 'commands', 'formats', 'format-detail', 'exitcodes', 'config', 'config-order', 'guard', 'integrity', 'defense', 'limits', 'timeout']:
         rs = groups.get(g, [])
         if not rs:
             continue
@@ -316,15 +321,21 @@ def main():
 
     A('## 5. 配置与环境变量（SPEC §2）')
     A('')
-    A('配置查找顺序、环境变量覆盖、`--db` 覆盖、以及“密码永不进入任何输出”均已逐项验证。密码泄露测试使用不会出现在其他字段的唯一哨兵值：`S3cr3tLeak_9z`（不可达端口配置）、`LeakMarker_9z`（错误密码配置 / MYSQLQ_PASSWORD 环境变量）。')
+    A('本轮配置查找顺序变更为：')
+    A('')
+    A('```')
+    A('1) --config <path>                          （命令行显式指定，最高优先）')
+    A('2) $MYSQLQ_CONFIG                           （环境变量）')
+    A('3) <mysqlq.exe 所在目录>/config.yaml        （默认；与当前工作目录无关）')
+    A('4) ./config.yaml                            （cwd 兜底，仅为 go run 等场景）')
+    A('```')
+    A('')
+    A('原来的 `../config.yaml` 兜底已按 SPEC 要求移除。配置加载顺序、环境变量覆盖、`--db` 覆盖、以及“密码永不进入任何输出”均已逐项验证。密码泄露测试使用不会出现在其他字段的唯一哨兵值：`S3cr3tLeak_9z`（不可达端口配置）、`LeakMarker_9z`（错误密码配置 / MYSQLQ_PASSWORD 环境变量）。')
     A('')
     cfg_cn = {
         'cfg-explicit': '`--config <path>` 生效：info 的 config_file 为该路径，default_max_rows=5',
         'cfg-env-config': '`MYSQLQ_CONFIG` 生效（config_file 指向 env 指定文件，max_rows=5）',
         'cfg-cli-over-env': '优先级 `--config` > `MYSQLQ_CONFIG`（取 max_rows=9 的配置）',
-        'cfg-cwd': '无 --config/MYSQLQ_CONFIG 时使用当前目录 `./config.yaml`（max_rows=7）',
-        'cfg-env-over-cwd': '`MYSQLQ_CONFIG` > 当前目录 config.yaml',
-        'cfg-parent-fallback': '查找链后备：在 `bin/` 下运行时能通过 `../config.yaml` 找到根配置',
         'cfg-quoted': '配置值可用引号包裹（`db_passwd: "root"`）并成功连接',
         'cfg-unknown-key': '未知配置键被忽略，不报错',
         'cfg-bad-maxrows': '`max_rows: abc` → 配置错误 exit 1，提示 1..100',
@@ -348,6 +359,36 @@ def main():
     A(table(['用例', '期望', '实际（摘要）', '结论'], rows))
     A('')
     A('`info` 正常输出仅 10 行 KEY/VALUE（tool_version/config_file/host/port/database/user/server_version/read_only/default_max_rows/default_timeout），无任何密码字段；另断言输出中不含 `root:root`、`@tcp(`、`db_passwd:`、`password=` 等凭证模式。')
+    A('')
+    A('### 5.1 配置查找顺序专项（本轮新增，SPEC §2）')
+    A('')
+    A('通过把 `mysqlq.exe`（或整个部署目录）**复制到隔离的临时目录**来独立验证查找顺序，避免 cwd / exe 同目录互相干扰；每条都断言 `info` 的 `config_file` 指向、`database` 与 `default_max_rows` 均来自预期那份配置。')
+    A('')
+    cfgord_cn = {
+        'ord-01': '默认：从无关 cwd 调用根目录 exe → 读 exe 同目录 `config.yaml`（config_file=根配置，database=bbc，max_rows=20）',
+        'ord-02': '默认：从真实 `%TEMP%` 子目录调用 → 仍读 exe 同目录配置（与当前工作目录无关）',
+        'ord-03': 'exe 同目录配置优先于 cwd 的诱饵配置（取 20 而非 cwd 的 7）',
+        'ord-04': '复制的部署目录（exe+funds 配置）从仓库根调用 → 读部署目录配置（funds/11），不读 cwd 根配置',
+        'ord-05': '复制的部署目录换一个 cwd 调用 → 仍读部署目录配置（11 而非 cwd 的 9）',
+        'ord-06': '`--config` 覆盖 exe 同目录配置（取 5，而非部署目录的 11）',
+        'ord-07': '`MYSQLQ_CONFIG` 覆盖 exe 同目录配置（取 5，而非部署目录的 11）',
+        'ord-08': 'exe 同目录无配置时使用 `./config.yaml` 兜底（go run 场景，取 cwd 的 7）',
+        'ord-09': '`MYSQLQ_CONFIG` 优先于 `./config.yaml` 兜底（取 5，而非 cwd 的 7）',
+        'ord-10': '完全无配置 → exit 1，stderr 含 `no config file found`，并指引放到 mysqlq.exe 同目录或用 `--config`',
+        'ord-10b': '无配置错误信息不含凭证模式（无泄露）',
+        'ord-11': '旧 `../config.yaml` 兜底已移除：配置仅存在于 cwd 的父目录 → exit 1（不再被加载）',
+        'ord-11b': '输出不引用父目录的配置路径（证明确实没有读取）',
+        'ord-12': '部署目录可整体迁移（exe+config 一起移动）后依然可用（funds）',
+    }
+    rows = []
+    for k in order:
+        if not k.startswith('config-order/'):
+            continue
+        r = recs[k]
+        rows.append([r['id'], esc(cfgord_cn.get(r['id'], r['desc'])), esc(brief(r['actual'], 320)), r['status']])
+    A(table(['用例', '期望', '实际（摘要）', '结论'], rows))
+    A('')
+    A('专项结论：exe 同目录 `config.yaml` 为默认配置且优先于 cwd；`--config` / `MYSQLQ_CONFIG` 覆盖顺序正确；`./config.yaml` 仅在 exe 同目录无配置时兜底；无配置时报错清晰可执行；旧 `../config.yaml` 兜底确已移除。与 SPEC §2 完全一致。')
     A('')
 
     A('## 6. 只读拦截矩阵（SPEC §6 / §7 / §8.4）')
@@ -561,10 +602,13 @@ def main():
     A('')
     A('> 说明：上述 5 条均已纳入 `scripts/verify/verify.ps1` 的回归用例，重跑后全部 PASS；同时按“每个用例只断言一件事”的原则拆分了 exit code 与格式形状断言。')
     A('')
+    A('本轮（task-3）另有 3 条旧用例因部署布局/配置解析方式变更而**失效并被替换**（非工具缺陷）：`config/cfg-cwd`（旧行为：cwd 配置优先）→ 改为 `config-order/ord-03`（exe 同目录优先）；`config/cfg-env-over-cwd` → `config-order/ord-09`（env 优先于 cwd 兜底）；`config/cfg-parent-fallback`（旧 `../config.yaml` 兜底）→ `config-order/ord-11`（确认已移除）。替换后全部 PASS。')
+    A('')
     A('## 12. 交付结论')
     A('')
     A('- **总体结论：可交付（PASS）**。')
-    A('- 规格 §8 验收标准逐项满足：`bin\\mysqlq.exe` 可用；`info` 正确显示 8.0.33/bbc 且不泄露密码；全部命令正常、四种格式合法；§7 拦截矩阵逐条 exit 3 且数据零变化；行数限制（默认 20、config 5、config 500→100 钳制、`--max-rows 101`→exit 2、任何组合 ≤100）全部满足；`--help` 可用、未知命令 exit 2。')
+    A('- 本轮变更复核通过：构建产物位于仓库根目录 `mysqlq.exe`（`bin/` 已删除，根目录即部署目录，`config.yaml`/`config.example.yaml`/`SKILL.md` 同级）；配置默认读取 exe 同目录 `config.yaml`、与 cwd 无关，exe 同目录优先于 cwd，`--config`/`MYSQLQ_CONFIG` 覆盖顺序正确，旧 `../config.yaml` 兜底确已移除，无配置时报错清晰。')
+    A('- 规格 §8 验收标准逐项满足：`mysqlq.exe` 可用；`info` 正确显示 8.0.33/bbc 且不泄露密码；全部命令正常、四种格式合法；§7 拦截矩阵逐条 exit 3 且数据零变化；行数限制（默认 20、config 5、config 500→100 钳制、`--max-rows 101`→exit 2、任何组合 ≤100）全部满足；`--help` 可用、未知命令 exit 2。')
     A('- 唯一遗留为 **[MINOR] CSV 的 `#` 表头在 PowerShell `Import-Csv` 下的互操作提示**（数据本身 RFC4180 合法），不影响交付判定，建议后续迭代或在使用文档中提示。')
     A('- 未发现 [BLOCKER]。本次验证未修改任何源码、配置与文档（除本报告与 `scripts/verify/**`）。')
     A('')
@@ -574,8 +618,9 @@ def main():
     A('powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\verify\\verify.ps1')
     A('```')
     A('')
-    A('- `scripts/verify/verify.ps1`：可重复执行的完整验证脚本（纯 ASCII，Windows PowerShell 5.1 兼容；不写数据库，只读）。')
-    A('- `scripts/verify/last-run.log` / `scripts/verify/last-run.md`：最近一次运行的 326 例逐条原始证据（命令 / 期望 / 实际 / 结论）。')
+    A('- `scripts/verify/verify.ps1`：可重复执行的完整验证脚本（纯 ASCII，Windows PowerShell 5.1 兼容；不写数据库，只读；覆盖根目录 `mysqlq.exe` 与配置查找顺序专项）。')
+    A('- `scripts/verify/last-run.log` / `scripts/verify/last-run.md`：最近一次运行的 ' + str(total) + ' 例逐条原始证据（命令 / 期望 / 实际 / 结论）。')
+    A('- `scripts/verify/gen_report.py`：由上述证据日志生成本报告的脚本（便于复跑后一键刷新）。')
     A('')
     A('---')
     A('')

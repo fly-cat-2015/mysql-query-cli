@@ -5,72 +5,62 @@ description: 用 mysqlq 命令行工具安全地查询 MySQL（列数据库、�
 
 # mysqlq —— MySQL 只读查询 CLI
 
-供 AI agent 在 shell 里探查 MySQL 用的单一二进制工具。它对 SQL 做严格白名单校验，
-**只能查询，永远不能修改数据或结构**。需要看库、看表、看字段、看索引、看数据时优先用它。
+`mysqlq` 是给 AI agent（也给人）用的单一二进制命令行工具，用于在 shell 里探查 MySQL：
+数据库、表、表结构、索引、建表语句、表数据。它对 SQL 做严格白名单校验，**只能查，不能改**。
 
 ## 何时使用
 
-- 要确认某个库有哪些表、表里有哪些字段、字段类型/可空/默认值/注释
-- 要看索引、主键、唯一约束，或拿完整建表语句（DDL）
-- 要读几行数据做样例分析、核对业务含义
-- 要判断"某个字段在哪张表里"（`find`）
-- 需要稳定的机器可解析输出（`--format json` / `csv`）
+- 确认某个库有哪些表、某张表有哪些字段、字段类型/可空/默认值/注释
+- 查看索引、主键、唯一约束，或取完整建表语句（DDL）
+- 读少量数据做样例分析、核对业务含义
+- 判断"某个字段在哪张表里"（`find`）
+- 需要机器可解析的稳定输出（`--format json` 或 `csv`）
 
-不适合：写数据、改结构、跑存储过程、导入导出。工具不提供这些能力，别尝试。
+不适用：写数据、改结构、跑存储过程、导入导出。工具不提供这些能力，不要尝试。
 
-## 安全模型（重要）
+## 安全模型（必读）
 
-三道防线，任何一道都足以拒绝写操作：
+三道防线，任意一道都足以拒绝写操作：
 
-1. 词法层：SQL 先在本地被 tokenize，首关键字必须在白名单
-   （`SELECT`/`WITH`/`SHOW`/`DESC`/`DESCRIBE`/`EXPLAIN`），且不得出现写关键字
-   （`INSERT`/`UPDATE`/`DELETE`/`CREATE`/`ALTER`/`DROP`/`TRUNCATE`/`SET`/`GRANT`…）；
-   仅允许单条语句，`/*! ... */` 这类可执行注释会被拒绝。
-2. 事务层：查询在 MySQL 的 `READ ONLY` 事务中执行，服务端也会拒绝写入。
-3. 连接层：`multiStatements=false`、查询超时、返回行数上限。
+1. **词法层**：SQL 先在本地被逐 token 审核，首关键字必须在白名单
+   （`SELECT` / `WITH` / `SHOW` / `DESC` / `DESCRIBE` / `EXPLAIN`），且不得出现写关键字
+   （`INSERT` / `UPDATE` / `DELETE` / `CREATE` / `ALTER` / `DROP` / `TRUNCATE` / `SET` / `GRANT` …）；
+   只允许单条语句；`/*! ... */` 这类可执行注释会被拒绝。
+2. **事务层**：查询在 MySQL 的 `READ ONLY` 事务中执行，服务端同样会拒绝写入。
+3. **连接层**：禁用多语句、查询超时、返回行数上限。
 
-被拦截时：**退出码 3，stderr 含 `blocked`，stdout 无数据**。
-拦截意味着"这条路走不通"，正确反应是改写成查询语句，**不要**尝试拼接、注释、大小写混淆、
-多语句、`INTO OUTFILE` 等方式绕过 —— 那些都会被拦截，而且本来就违反工具约定。
+被拦截时：**退出码 3、stderr 含 `blocked`、stdout 无数据**。
+拦截意味着这条路走不通，正确反应是改写成查询语句，**不要**尝试拼接、注释、大小写混淆、
+多语句、`INTO OUTFILE` 等方式绕过 —— 都会被拦截，而且本来就违反工具约定。
 
-## 位置与构建
+## 找到可执行文件与配置
 
-本 `SKILL.md` 与 `mysqlq.exe`、`config.yaml` 位于**同一个目录**（下称"工具目录"）。
-在工具目录里直接运行即可：
+- 本 `SKILL.md` 通常与 `mysqlq`（Windows 上为 `mysqlq.exe`）和 `config.yaml` 放在**同一个目录**。
+- 若 `mysqlq` 已在 `PATH` 中，直接调用 `mysqlq` 即可；否则用绝对路径或先 `cd` 到该目录。
+
+```bash
+# macOS / Linux
+./mysqlq info
+```
 
 ```powershell
+# Windows PowerShell
 .\mysqlq.exe info
 ```
 
-若 `mysqlq.exe` 已在 `PATH` 中，也可直接 `mysqlq info`。从其它目录调用时建议用绝对路径，
-脚本里可用 `$PSScriptRoot` 定位（因此不要依赖当前工作目录）：
-
-```powershell
-$MQ = Join-Path $PSScriptRoot 'mysqlq.exe'
-& $MQ tables
-```
-
-需要重新构建时（有 Go 源码）：在仓库根目录执行
-`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1`，
-产物就是根目录下的 `mysqlq.exe`（与 `config.yaml`、本文件同级）。
+配置**默认读取可执行文件同目录的 `config.yaml`**，与当前工作目录无关；
+需要指向别处时用 `--config <path>` 或环境变量 `MYSQLQ_CONFIG`（见下节）。
 
 ## 配置
 
-默认自动查找配置文件（第一个存在的生效），**默认就是 `mysqlq.exe` 同目录的 `config.yaml`**，
-所以部署时把三者放一起即可，从任何目录调用都不用传参：
+查找顺序（第一个存在的生效）：
 
-1. `--config <path>`（命令行显式指定）
+1. `--config <path>`
 2. 环境变量 `MYSQLQ_CONFIG`
-3. **`mysqlq.exe` 所在目录的 `config.yaml`**（默认，与 `SKILL.md` 同级）
-4. `./config.yaml`（当前工作目录，兜底：`go run` 等场景）
+3. **可执行文件所在目录的 `config.yaml`**（默认）
+4. `./config.yaml`（当前工作目录，兜底）
 
-工具目录里若只有 `config.example.yaml`，复制一份为 `config.yaml` 再改成实际值：
-
-```powershell
-Copy-Item .\config.example.yaml .\config.yaml
-```
-
-`config.yaml` 内容（扁平 YAML 子集，注释必须独占一行）：
+配置文件是扁平 YAML 子集：只支持 `key: value`，**注释必须独占一行**，不要写在值后面。
 
 ```yaml
 db_host: 127.0.0.1
@@ -78,38 +68,33 @@ db_port: 3306
 db_name: your_database
 db_user: your_user
 db_passwd: your_password
-max_rows: 20        # 可选：单次返回行数上限，默认 20，硬上限 100
+max_rows: 20
 ```
 
 可选键：`db_port`（默认 3306）、`db_charset`（默认 utf8mb4）、
-`max_rows`（单次返回行数上限，默认 20，硬上限 100——写超过 100 会被钳制成 100 并警告）。
-环境变量覆盖：`MYSQLQ_HOST`、`MYSQLQ_PORT`、`MYSQLQ_DB`、`MYSQLQ_USER`、`MYSQLQ_PASSWORD`；
-切库更简单的方式是 `--db <name>`。
+`max_rows`（单次返回行数上限，默认 20，硬上限 100）。
+环境变量覆盖：`MYSQLQ_HOST` / `MYSQLQ_PORT` / `MYSQLQ_DB` / `MYSQLQ_USER` / `MYSQLQ_PASSWORD`；
+临时切库更简单的方式是 `--db <name>`。
 
 密码不会出现在任何输出里，不要试图从工具输出里找密码。
 
 ## 标准探索流程
 
-先宽后窄，每步只取需要的列，别一上来 `SELECT * FROM 大表`：
+先宽后窄，每步只取需要的列，不要一上来 `SELECT * FROM 大表`：
 
-```powershell
-# 1) 连接正常吗？服务器版本、当前库
-& $MQ info
-# 2) 有哪些库
-& $MQ databases
-# 3) 当前库有哪些表（含注释，注释常说明业务含义）
-& $MQ tables
-# 4) 一次性拿到某张表的列+索引+DDL（推荐，比分别问更省事）
-& $MQ schema sale_pay --format json
-# 5) 取样例数据（带 LIMIT）
-& $MQ query 'SELECT * FROM sale_pay LIMIT 5' --format json
+```bash
+./mysqlq info                                               # 连通性、MySQL 版本、当前库
+./mysqlq databases                                          # 有哪些库
+./mysqlq tables                                             # 当前库的表（含注释、行数估算）
+./mysqlq schema sale_pay --format json                      # 一次拿全列 + 索引 + DDL
+./mysqlq query 'SELECT * FROM sale_pay LIMIT 5' --format json
 ```
 
-需要找字段时用 `find`（无通配符时自动模糊匹配；自己写 `%`/`_` 时按原样传给 LIKE）：
+找不到字段在哪张表时用 `find`（无通配符时自动按 `%关键字%` 模糊匹配；显式写 `%`/`_` 时按原样传给 LIKE）：
 
-```powershell
-& $MQ find order          # 匹配表名、表注释、列名、列注释（等价于 %order%）
-& $MQ find '%amount%'     # 显式通配符写法
+```bash
+./mysqlq find order
+./mysqlq find '%amount%'
 ```
 
 ## 命令速查
@@ -117,51 +102,53 @@ max_rows: 20        # 可选：单次返回行数上限，默认 20，硬上限 
 | 命令 | 作用 | 示例 |
 |---|---|---|
 | `info` | 连接信息、MySQL 版本、当前库、只读状态、配置来源 | `mysqlq info` |
-| `databases` (别名 `dbs`) | 列数据库（默认隐藏系统库） | `mysqlq databases --all` |
-| `tables` | 列表/视图：类型、引擎、行数估算、注释 | `mysqlq tables --db bbc` |
+| `databases`（别名 `dbs`） | 数据库列表 | `mysqlq databases --all` |
+| `tables` | 表/视图：类型、引擎、行数估算、注释 | `mysqlq tables` |
 | `columns <table>` | 列结构：序号、类型、可空、键、默认值、注释 | `mysqlq columns sale_pay` |
 | `indexes <table>` | 索引：唯一性、组成列、类型 | `mysqlq indexes sale_pay` |
 | `ddl <table>` | `SHOW CREATE TABLE` 原文 | `mysqlq ddl sale_pay` |
-| `schema <table>` | 列+索引+DDL 组合（JSON 为一个对象） | `mysqlq schema sale_pay --format json` |
-| `query <sql>` | 执行只读 SQL；`-` 表示从 stdin 读 | `mysqlq query 'SELECT 1'` |
-| `find <keyword>` | 按名称/注释模糊搜索表与列（无通配符时自动按 `%关键字%` 匹配） | `mysqlq find order` |
+| `schema <table>` | 列 + 索引 + DDL 组合（JSON 为一个对象） | `mysqlq schema sale_pay --format json` |
+| `query <sql>` | 执行一条只读 SQL；`-` 表示从 stdin 读 | `mysqlq query 'SELECT 1'` |
+| `find <keyword>` | 按名称/注释模糊搜索表与列 | `mysqlq find order` |
 | `version` | 工具版本 | `mysqlq version` |
 
 全局参数（可放在子命令前后）：
 
 | 参数 | 说明 | 默认 |
 |---|---|---|
-| `-c, --config <path>` | 指定配置文件 | 自动查找（默认 `mysqlq.exe` 同目录） |
-| `--db <name>` | 覆盖数据库 | `config.yaml` 的 `db_name` |
+| `-c, --config <path>` | 指定配置文件 | 可执行文件同目录的 `config.yaml` |
+| `--db <name>` | 覆盖数据库名 | 配置文件里的 `db_name` |
 | `--format <table\|json\|csv\|md>` | 输出格式 | `table` |
-| `--timeout <dur>` | 查询超时（`500ms`/`10s`/`2m`） | `30s` |
-| `--max-rows <n>` | 单次最大返回行数，**只允许 1..100** | `20`（config `max_rows` 可调） |
+| `--timeout <dur>` | 查询超时，如 `500ms` / `10s` / `2m` | `30s` |
+| `--max-rows <n>` | 单次最大返回行数，**只允许 1..100** | `20`（配置 `max_rows` 可调） |
 | `--all` | `databases` 时包含系统库 | 关闭 |
 | `-h, --help` | 帮助 | |
 
-## 输出与解析
+## 输出格式与解析
 
-- **stdout 只有数据**；行数、截断提示、警告都在 **stderr**（格式 `[mysqlq] 12 row(s) in 5ms`）。
-  agent 解析时读 stdout，必要时用 `2>$null` 屏蔽 stderr。
-- 给程序/AI 处理请用 `--format json`：数组，元素为对象，key 是列名。
+- **stdout 只放数据**；行数统计、截断提示、警告都写 **stderr**（如 `[mysqlq] 12 row(s) in 5ms`）。
+  agent 解析时读 stdout，必要时丢弃 stderr（`2>/dev/null`；Windows 用 `2>$null`）。
+- 给程序/AI 处理首选 `--format json`：数组，元素为对象，key 是列名。
   - NULL → `null`；数值类型（整数、DECIMAL、FLOAT）→ JSON 数字（DECIMAL 精度保留）；
-    日期时间、字符串、二进制 → JSON 字符串（非 UTF-8 二进制为 base64）。
+    日期时间、字符串 → JSON 字符串；非 UTF-8 二进制 → base64 字符串。
   - `schema` 是唯一例外：JSON 为**对象** `{database, table, columns, indexes, ddl}`。
-- `--format csv`：RFC 4180，首行表头，NULL 为空字段；`--format md`：GitHub 表格，便于贴进报告。
-  提醒：`columns` 的 CSV 表头首列是 `#`，PowerShell 的 `Import-Csv` 会把它当注释行，解析 CSV 建议用 `--format json`。
-- `--format table`（默认）：无边框对齐表格，判断"人看得懂"够用；NULL 显示 `NULL`。
-- 结果被截断时 stdout 仍是合法输出，stderr 有 `[mysqlq] truncated to N row(s) (--max-rows)` 提示。
+- `--format csv`：RFC 4180，首行表头，NULL 为空字段。
+- `--format md`：GitHub 风格表格，便于贴进报告。
+- `--format table`（默认）：无边框对齐表格，人读友好，NULL 显示为 `NULL`。
+- 结果被截断时 stdout 仍是合法输出，stderr 提示 `[mysqlq] truncated to N row(s) (--max-rows)`。
+- 小坑：`columns` 的 CSV 表头首列是 `#`，部分 CSV 解析器（如 PowerShell `Import-Csv`）会把它当注释；
+  解析 CSV 优先用 `--format json`。
 
 ## 返回行数限制（必读）
 
-- **单次查询默认最多返回 20 行**，由 `config.yaml` 的 `max_rows` 决定。
-- **绝对硬上限 100 行**：`--max-rows` 只能取 1..100（越界 exit 2）；config 写超过 100 会被钳制为 100 并警告。
-- 这不是错误，是防呆设计。要拿更多数据时**不要**反复调大上限（上限不可突破），正确做法：
+- **单次查询默认最多返回 20 行**，由配置文件的 `max_rows` 决定。
+- **绝对硬上限 100 行**：`--max-rows` 只能取 1..100（越界 exit 2）；配置写超过 100 会被钳制为 100 并警告。
+- 这是防呆设计，不是错误。要拿更多数据时**不要**反复调大上限（突破不了），正确做法：
   1. 用聚合 `COUNT/SUM/AVG/GROUP BY` 直接拿结论；
   2. 用 `LIMIT n OFFSET m` 分页，逐页处理；
-  3. 用 `WHERE` 缩小范围（按 id 区间、时间区间、状态）；
-  4. 只 `SELECT` 需要的列，减少每页体积。
-- 需要长期更大的默认值时，请用户在 `config.yaml` 里设 `max_rows`（≤100），不要自己改配置或绕过工具。
+  3. 用 `WHERE` 缩小范围（id 区间、时间区间、状态）；
+  4. 只 `SELECT` 需要的列，减小每页体积。
+- 需要长期更大的默认值时，请用户在配置里设 `max_rows`（≤100），不要自己改配置或绕过工具。
 
 ## 退出码与处理策略
 
@@ -170,99 +157,106 @@ max_rows: 20        # 可选：单次返回行数上限，默认 20，硬上限 
 | 0 | 成功 | 解析 stdout |
 | 1 | 运行时错误：连不上库、SQL 报错、表/库不存在、超时、配置缺失 | 读 stderr 修 SQL/表名/参数；连接类错误不要重试超过 2 次 |
 | 2 | 用法错误：未知命令、缺参数、非法 flag | 读 stderr 和 `--help` 修正命令行 |
-| 3 | 被只读防护拦截 | **不要绕过**。把语句改写成 `SELECT`/`SHOW`/`DESC`/`EXPLAIN`；确实需要写操作就告诉用户"本工具只读，请提供写权限的方式" |
+| 3 | 被只读防护拦截 | **不要绕过**。把语句改写成 `SELECT`/`SHOW`/`DESC`/`EXPLAIN`；确需写操作就告诉用户"本工具只读" |
 
 错误信息格式：`mysqlq: <error|usage|blocked|config>: <消息>`。
 
 ## 最佳实践
 
-1. **先 schema 后数据**：不确定字段名时先 `schema`/`columns`，避免猜错列名浪费一轮。
-2. **查询必须限量**：`LIMIT 20` 起步（工具默认也只放行 20 行）；聚合（`COUNT/SUM/GROUP BY`）拿结论，别把整表读出来；要更多行用分页而不是调大上限。
-3. **只取需要的列**：`SELECT id,name` 而不是 `SELECT *`（大表尤其重要，且输出更省 token）。
-4. **重查询设超时**：多表 join / 无索引 / 大范围扫描加 `--timeout 10s`，超时后改条件而不是无脑重试。
-5. **判断"数据是否存在"**：`SELECT COUNT(*) ... LIMIT 1` 或 `SELECT 1 ... LIMIT 1`。
-6. **表结构优先信 `schema --format json`**：一次调用拿全列/索引/DDL，避免多轮往返。
-7. **行数估算**：`tables` 输出的 `ROWS` 来自统计信息，可能为 NULL 或不精确；要精确值用 `COUNT(*)`。
-8. **信息可能在注释里**：`tables`/`columns` 的 `COMMENT` 常写业务含义，先读注释再猜字段语义。
+1. **先结构后数据**：不确定字段名时先 `schema` / `columns`，避免猜错列名浪费一轮。
+2. **查询必须限量**：`LIMIT 20` 起步；聚合出结论，别把整表读出来；要更多行用分页。
+3. **只取需要的列**：`SELECT id, name` 而不是 `SELECT *`。
+4. **重查询设超时**：多表 join / 无索引 / 大范围扫描加 `--timeout 10s`；超时后改条件而不是无脑重试。
+5. **判断"数据是否存在"**：`SELECT 1 ... LIMIT 1` 或 `COUNT(*)`。
+6. **表结构优先信 `schema --format json`**：一次调用拿全列/索引/DDL，减少往返。
+7. **`tables` 的 `ROWS` 是统计估算**，可能为 NULL 或不精确；要精确值用 `COUNT(*)`。
+8. **注释常含业务含义**：`tables` / `columns` 的 `COMMENT` 先读，再猜字段语义。
 
-## PowerShell 引号规则（Windows 必读）
+## 跨平台调用注意
 
-SQL 里有单引号时，外层用双引号；反之用单引号。最稳的做法是外层单引号 + SQL 内部用 `''` 转义：
+工具本身跨平台（macOS / Linux 为 `mysqlq`，Windows 为 `mysqlq.exe`），只有 shell 语法不同：
 
-```powershell
-# 正确：外层单引号，SQL 里的字符串用双引号（MySQL 默认允许）
-& $MQ query 'SELECT id, pay_status FROM sale_pay WHERE pay_status = "SUCCESS" LIMIT 10'
+| 场景 | macOS / Linux | Windows PowerShell |
+|---|---|---|
+| 调用 | `./mysqlq info` | `.\mysqlq.exe info` |
+| 引用带空格路径 | `"/opt/mysqlq/bin/mysqlq" info` | `& "C:\mysqlq\mysqlq.exe" info` |
+| 丢弃 stderr | `2>/dev/null` | `2>$null` |
 
-# 正确：外层双引号（注意变量 $ 会被 PowerShell 展开）
-& $MQ query "SELECT COUNT(*) AS c FROM sale_pay"
+SQL 的引号规则（跨平台通用做法是用 stdin 传，避开 shell 转义）：
 
-# 复杂 SQL 用 here-string / 管道，避免转义地狱
-$sql = @'
+```bash
+# 单引号包裹 SQL（SQL 内部字符串用双引号，MySQL 默认可接受）
+./mysqlq query 'SELECT id FROM sale_pay WHERE pay_status = "SUCCESS" LIMIT 10'
+
+# 复杂 SQL 用 heredoc，最稳
+./mysqlq query - --format json <<'SQL'
 SELECT a.id, b.name
 FROM sale_order a JOIN sale_order_detail b ON b.order_id = a.id
 LIMIT 10
-'@
-& $MQ query $sql --format json
-
-# 或者从 stdin 传
-Get-Content .\query.sql -Raw | & $MQ query - --format json
+SQL
 ```
-
-- SQL 避免多语句；结尾分号可留一个，中间分号会被拦截。
-- 表名/列名与保留字冲突时用反引号：`` `order` ``；反引号内的词不参与关键字判断。
-- SQL 以 `-` 开头（例如以 `--` 注释开头）时，用 `--` 终止符把它变成位置参数；
-  注意 `--` 之后的参数都按位置参数处理，所以 `--format` 之类的 flag 要写在 `--` 前面：
 
 ```powershell
-& $MQ --format json query -- '-- 说明
-SELECT 1 AS ok'
+# Windows PowerShell：here-string + stdin
+$sql = @'
+SELECT a.id, b.name FROM sale_order a JOIN sale_order_detail b ON b.order_id = a.id LIMIT 10
+'@
+$sql | .\mysqlq.exe query - --format json
 ```
 
-- 本机是 Windows PowerShell 5.1：脚本要用 `powershell -NoProfile -ExecutionPolicy Bypass -File ...`，
-  没有 `pwsh`；直接调用 exe 不受影响。
+- 一条命令只发一条 SQL；结尾可留一个分号，中间分号会被拦截。
+- 表名/列名与保留字冲突时用反引号：`` `order` ``（反引号内不参与关键字判断）。
+- SQL 作为**参数**且以 `-` 开头时（例如以 `--` 注释开头），要用 `--` 终止符，
+  且 `--` 之后一律按位置参数处理 —— 所以 `--format` 等 flag 必须写在 `--` 之前。
+  更省心的做法是走 stdin（`query -` + heredoc），完全不涉及参数解析：
+
+```bash
+# 推荐：stdin 传入，SQL 首行是注释也没问题
+./mysqlq --format json query - <<'SQL'
+-- 说明：查一条
+SELECT 1 AS ok
+SQL
+
+# 参数形式需要 -- 终止符
+./mysqlq --format json query -- '-- note
+SELECT 1 AS ok'
+```
 
 ## 常见错误排查
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `config: no config file found ...` | 工具目录里没有 config.yaml | 把 `config.yaml` 放到 `mysqlq.exe` 同目录，或用 `--config <绝对路径>` 指定 |
-| `error: cannot connect to MySQL at ...` / `dial tcp ... refused` | MySQL 未启动/端口不对 | 让用户确认服务与 `db_host`/`db_port` |
-| `error: access denied for user ...` | 账号密码错/无权限 | 检查 `config.yaml`；不要反复重试 |
-| `error: table does not exist: ...` | 表名错/库错 | 先 `tables` 确认，或加 `--db` |
-| `blocked: ... forbidden keyword` | 语句含写关键字（`SHOW CREATE TABLE` 也属于此类） | 改成纯查询语句；看建表语句用 `ddl <table>` |
-| `blocked: multiple statements` | 有多条语句/中间分号 | 一次只发一条 SQL |
-| 输出被截断 | 超过生效行数上限（默认 20，最大 100） | 用聚合或 `LIMIT/OFFSET` 分页；必要时让用户在 config.yaml 调 `max_rows`（≤100） |
-| `usage: --max-rows must be between 1 and 100` | 上限不可突破 | 改成 1..100 的值 |
-| `error: query timed out after 30s` | 超过 `--timeout` | 优化查询/加索引条件/延长 `--timeout` |
+| `config: no config file found ...` | 工具目录没有 `config.yaml` | 把配置放到 `mysqlq` 同目录，或用 `--config <路径>` |
+| `error: cannot connect to MySQL at ...` | MySQL 未启动 / 端口不对 | 确认服务与 `db_host`/`db_port` |
+| `error: access denied for user ...` | 账号密码错 / 无权限 | 检查配置；不要反复重试 |
+| `error: table does not exist: ...` | 表名错 / 库错 | 先 `tables` 确认，或加 `--db` |
+| `blocked: ... forbidden keyword` | 语句含写关键字（`SHOW CREATE TABLE` 也算） | 改成纯查询；看 DDL 用 `ddl <table>` |
+| `blocked: multiple statements` | 多条语句 / 中间分号 | 一次只发一条 SQL |
+| 输出被截断 | 超过生效行数上限（默认 20，最大 100） | 用聚合或 `LIMIT/OFFSET` 分页 |
+| `usage: --max-rows must be between 1 and 100` | 上限不可突破 | 改成 1..100 |
+| `error: query timed out after 30s` | 超过 `--timeout` | 优化查询 / 加索引条件 / 延长 `--timeout` |
 
 ## 完整示例
 
-```powershell
-$MQ = '.\mysqlq.exe'    # 先 cd 到工具目录（mysqlq.exe / config.yaml / SKILL.md 所在目录）
+```bash
+MQ=./mysqlq     # 或 PATH 中的 mysqlq（Windows：.\mysqlq.exe）
 
 # 探查：库 → 表 → 结构 → 数据
-& $MQ databases --format json
-& $MQ tables --format json
-& $MQ schema sale_pay --format json
-& $MQ query 'SELECT id, pay_no, amount, pay_status FROM sale_pay ORDER BY id LIMIT 10' --format json
+$MQ databases --format json
+$MQ tables --format json
+$MQ schema sale_pay --format json
+$MQ query 'SELECT id, pay_no, amount, pay_status FROM sale_pay ORDER BY id LIMIT 10' --format json
 
 # 找字段来源
-& $MQ find refund --format json
+$MQ find refund --format json
 
 # 统计
-& $MQ query 'SELECT pay_status, COUNT(*) AS cnt FROM sale_pay GROUP BY pay_status' --format md
+$MQ query 'SELECT pay_status, COUNT(*) AS cnt FROM sale_pay GROUP BY pay_status' --format md
 ```
 
 ## 禁止事项
 
-- 不要尝试执行任何写操作或改结构语句（工具会拦截，且等于在试探安全边界）。
-- 不要用 `mysql`/`mysqladmin` 等其他客户端绕过本工具去写库。
-- 不要把 `config.yaml` 里的密码回显、写进日志或提交到仓库。
-- 不要假设返回类型：JSON 中数值是数字、日期是字符串；需要比较时先确认类型。
-
-## 安装为技能（可选）
-
-把 `SKILL.md`、`mysqlq.exe`、`config.yaml` **整个工具目录**复制到 agent 的技能目录（例如
-`<skills-dir>\mysql-query-cli\`）即可被发现；三者同目录，工具会自动读取同目录的配置。
-若希望全局命令 `mysqlq`，把该目录加入 `PATH`。
-配置文件也可用 `--config` 或 `MYSQLQ_CONFIG` 指向其它位置。
+- 不要尝试执行任何写操作或改结构语句（会被拦截，且等于在试探安全边界）。
+- 不要用 `mysql` / `mysqladmin` 等其它客户端绕过本工具去写库。
+- 不要把配置里的密码回显、写进日志或提交到仓库。
+- 不要假设返回类型：JSON 中数值是数字、日期是字符串；比较前先确认类型。
