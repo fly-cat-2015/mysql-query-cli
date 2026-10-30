@@ -21,6 +21,8 @@ Commands:
   ddl <table>              SHOW CREATE TABLE output
   schema <table>           columns + indexes + ddl in one view
   query <sql>              run one read-only SQL statement ("-" reads stdin)
+  explain <sql>            show the EXPLAIN plan for one read-only statement
+                           ("-" reads stdin)
   find <keyword>           search table/column names and comments (substring match;
                            include %% or _ in the keyword to use it as a LIKE pattern)
   version                  print tool version

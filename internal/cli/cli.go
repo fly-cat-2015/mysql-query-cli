@@ -74,9 +74,9 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	// ---- query：先做只读拦截，拦截必须早于任何与数据库的交互（SPEC §6.2-7） ----
+	// ---- query / explain：先做只读拦截，拦截必须早于任何与数据库的交互（SPEC §6.2-7） ----
 	var querySQL string
-	if o.command == "query" {
+	if o.command == "query" || o.command == "explain" {
 		querySQL, err = readQuery(o, stdin)
 		if err != nil {
 			fmt.Fprintf(stderr, "mysqlq: usage: %s\n", err.Error())
@@ -167,6 +167,8 @@ func (a *app) run(ctx context.Context, querySQL string) error {
 		return a.cmdSchema(ctx)
 	case "query":
 		return a.cmdQuery(ctx, querySQL)
+	case "explain":
+		return a.cmdExplain(ctx, querySQL)
 	case "find":
 		return a.cmdFind(ctx)
 	default:
@@ -384,6 +386,20 @@ func (a *app) cmdQuery(ctx context.Context, querySQL string) error {
 	return nil
 }
 
+// cmdExplain 输出指定 SQL 的执行计划（经典 EXPLAIN 结果集）。
+func (a *app) cmdExplain(ctx context.Context, querySQL string) error {
+	start := time.Now()
+	rs, err := a.db.Query(ctx, explainStatement(querySQL), a.maxRows)
+	if err != nil {
+		return err
+	}
+	if err := output.Render(a.stdout, rs, a.format); err != nil {
+		return err
+	}
+	a.statsResult(rs, time.Since(start))
+	return nil
+}
+
 func (a *app) cmdFind(ctx context.Context) error {
 	keyword := a.opts.args[0]
 	start := time.Now()
@@ -423,6 +439,23 @@ func durString(d time.Duration) string {
 		return "0ms"
 	}
 	return d.Round(time.Millisecond).String()
+}
+
+// planKeywords 是"语句本身已经是执行计划查询"的首关键字。
+var planKeywords = map[string]bool{"EXPLAIN": true, "DESC": true, "DESCRIBE": true}
+
+// explainStatement 返回真正发送给 MySQL 的执行计划语句。
+//
+// 已以 EXPLAIN/DESC/DESCRIBE 开头的语句原样执行：避免 `EXPLAIN EXPLAIN ...` 的语法错误，
+// 也保留用户自己写的 `EXPLAIN FORMAT=JSON ...`。其余语句统一加 `EXPLAIN ` 前缀。
+// 词法失败时不在这里报错（由随后的 guard.Check 给出 blocked），只按需要加前缀。
+func explainStatement(sql string) string {
+	if toks, err := guard.Tokenize(sql); err == nil && len(toks) > 0 {
+		if first := toks[0]; first.Kind == guard.KindWord && planKeywords[first.Word] {
+			return sql
+		}
+	}
+	return "EXPLAIN " + sql
 }
 
 // readQuery 从参数或 stdin 读取 SQL。
@@ -555,13 +588,14 @@ func parseArgs(args []string) (*options, error) {
 func validateCommand(o *options) error {
 	switch o.command {
 	case "info", "databases", "dbs", "tables", "columns", "indexes", "ddl",
-		"schema", "query", "find", "version", "help":
+		"schema", "query", "explain", "find", "version", "help":
 	default:
-		return usageErrorf("unknown command %q (commands: info, databases, tables, columns, indexes, ddl, schema, query, find, version)", o.command)
+		return usageErrorf("unknown command %q (commands: info, databases, tables, columns, indexes, ddl, schema, query, explain, find, version)", o.command)
 	}
 
 	needOne := map[string]bool{
-		"columns": true, "indexes": true, "ddl": true, "schema": true, "query": true, "find": true,
+		"columns": true, "indexes": true, "ddl": true, "schema": true,
+		"query": true, "explain": true, "find": true,
 	}
 	if needOne[o.command] {
 		if len(o.args) != 1 {

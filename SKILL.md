@@ -109,6 +109,7 @@ max_rows: 20
 | `ddl <table>` | `SHOW CREATE TABLE` 原文 | `mysqlq ddl sale_pay` |
 | `schema <table>` | 列 + 索引 + DDL 组合（JSON 为一个对象） | `mysqlq schema sale_pay --format json` |
 | `query <sql>` | 执行一条只读 SQL；`-` 表示从 stdin 读 | `mysqlq query 'SELECT 1'` |
+| `explain <sql>` | 输出一条只读 SQL 的执行计划（经典 `EXPLAIN` 列：`type`/`key`/`rows`/`Extra` …）；`-` 表示从 stdin 读，SQL 已带 `EXPLAIN` 前缀时原样执行 | `mysqlq explain 'SELECT * FROM sale_pay WHERE pay_status = "SUCCESS"'` |
 | `find <keyword>` | 按名称/注释模糊搜索表与列 | `mysqlq find order` |
 | `version` | 工具版本 | `mysqlq version` |
 
@@ -246,6 +247,9 @@ $MQ databases --format json
 $MQ tables --format json
 $MQ schema sale_pay --format json
 $MQ query 'SELECT id, pay_no, amount, pay_status FROM sale_pay ORDER BY id LIMIT 10' --format json
+
+# 分析执行计划（索引是否命中、扫多少行、有没有 filesort）
+$MQ explain 'SELECT id, pay_no FROM sale_pay WHERE pay_status = "SUCCESS" ORDER BY id' --format json
 
 # 找字段来源
 $MQ find refund --format json

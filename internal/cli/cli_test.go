@@ -145,3 +145,72 @@ func TestUsageAndVersion(t *testing.T) {
 		t.Fatalf("empty stdin: exit=%d err=%q", code, errText)
 	}
 }
+
+// TestExplainStatement 覆盖 explain 的前缀规则：没有前缀就补 `EXPLAIN `，
+// 已经是执行计划查询（EXPLAIN/DESC/DESCRIBE）则原样执行。
+func TestExplainStatement(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"SELECT 1", "EXPLAIN SELECT 1"},
+		{"select * from sale_pay where id = 1", "EXPLAIN select * from sale_pay where id = 1"},
+		{"  SELECT 1;", "EXPLAIN   SELECT 1;"},
+		{"/*+ MAX_EXECUTION_TIME(1000) */ SELECT 1", "EXPLAIN /*+ MAX_EXECUTION_TIME(1000) */ SELECT 1"},
+		{"EXPLAIN SELECT 1", "EXPLAIN SELECT 1"},
+		{"explain format=json SELECT 1", "explain format=json SELECT 1"},
+		{"DESC sale_pay", "DESC sale_pay"},
+		{"DESCRIBE sale_pay", "DESCRIBE sale_pay"},
+		{"EXPLAIN ANALYZE SELECT 1", "EXPLAIN ANALYZE SELECT 1"},
+		// 词法失败时不报错、只加前缀（真正的拒绝交给 guard.Check）。
+		{"SELECT 'unterminated", "EXPLAIN SELECT 'unterminated"},
+	}
+	for _, c := range cases {
+		if got := explainStatement(c.in); got != c.want {
+			t.Fatalf("explainStatement(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestExplainUsage 覆盖 explain 的参数个数校验（不连库）。
+func TestExplainUsage(t *testing.T) {
+	for _, args := range [][]string{{"explain"}, {"explain", "SELECT 1", "SELECT 2"}} {
+		code, out, errText := runCLI(t, args...)
+		if code != 2 {
+			t.Fatalf("%v: exit = %d, want 2", args, code)
+		}
+		if out != "" {
+			t.Fatalf("%v: stdout = %q, want empty", args, out)
+		}
+		if !strings.Contains(errText, "exactly 1 argument") {
+			t.Fatalf("%v: stderr = %q, want argument-count message", args, errText)
+		}
+	}
+
+	// 空 stdin 与 query 一致：用法错误
+	code, _, errText := runCLI(t, "explain", "-")
+	if code != 2 || !strings.Contains(errText, "stdin") {
+		t.Fatalf("explain -: exit=%d err=%q", code, errText)
+	}
+}
+
+// TestExplainGuardRunsBeforeConfig 证明 explain 也先拦截再连库：写 SQL 一律 exit 3。
+func TestExplainGuardRunsBeforeConfig(t *testing.T) {
+	cases := []string{
+		"INSERT INTO sale_pay (id) VALUES (1)",
+		"UPDATE sale_pay SET pay_status = 'x'",
+		"DELETE FROM sale_pay WHERE id = 1",
+		"EXPLAIN DELETE FROM sale_pay",
+	}
+	for _, sqlText := range cases {
+		code, out, errText := runCLI(t,
+			"--config", "definitely-not-a-config-file.yaml",
+			"explain", sqlText)
+		if code != 3 {
+			t.Fatalf("explain %q: exit = %d, want 3", sqlText, code)
+		}
+		if out != "" {
+			t.Fatalf("explain %q: stdout = %q, want empty", sqlText, out)
+		}
+		if !strings.Contains(errText, "blocked") {
+			t.Fatalf("explain %q: stderr = %q, want blocked", sqlText, errText)
+		}
+	}
+}

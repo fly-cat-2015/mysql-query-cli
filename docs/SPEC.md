@@ -117,6 +117,7 @@ SELECT 1'`）；注意 `--` 之后的 `--format` 不再被解析为 flag。
 | `ddl <table>` | `SHOW CREATE TABLE` 原文 |
 | `schema <table>` | 列 + 索引 + DDL 的组合视图（agent 一次性了解表） |
 | `query <sql>` / `<sql>` 为 `-` 时从 stdin 读 | 执行只读 SQL |
+| `explain <sql>` / `-` 同上 | 输出该只读语句的执行计划（经典 `EXPLAIN` 结果集） |
 | `find <keyword>` | 在库内按表名/列名/注释模糊搜索 |
 | `version` | 工具版本 |
 
@@ -184,7 +185,20 @@ SELECT 1'`）；注意 `--` 之后的 `--format` 不再被解析为 flag。
 列：`KIND`（`TABLE`/`COLUMN`）、`TABLE`、`COLUMN`、`TYPE`、`COMMENT`。
 先列匹配的表，再列匹配的列，各自按名字排序。匹配范围：表名、表注释、列名、列注释。
 
-### 3.10 `version`
+### 3.10 `explain <sql>`
+
+在只读事务中执行 `EXPLAIN <sql>`，输出 MySQL 经典执行计划（与 `query` 共用同一套只读防护、
+超时与行数上限）：
+
+- 参数与 stdin 约定同 `query`（`-` 表示从 stdin 读）。
+- 输出列即 MySQL 返回的计划列（MySQL 8：`id`、`select_type`、`table`、`partitions`、`type`、
+  `possible_keys`、`key`、`key_len`、`ref`、`rows`、`filtered`、`Extra`），四种 `--format` 均适用。
+- SQL 已以 `EXPLAIN`/`DESC`/`DESCRIBE` 开头时**原样执行**（不再叠加前缀，避免语法错误，
+  并保留 `EXPLAIN FORMAT=JSON ...` 这类写法）；其余情况自动补 `EXPLAIN ` 前缀。
+- 写语句（如 `explain 'INSERT ...'`）仍由 §6.2 拦截，exit 3，不连库。
+- 不做计划解读：不输出任何启发式建议，计划由调用方（agent）自行判断。
+
+### 3.11 `version`
 
 stdout 打印 `mysqlq <version>`（版本常量写在 `internal/cli`，形如 `1.0.0`）。
 

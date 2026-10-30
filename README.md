@@ -70,6 +70,7 @@ $MQ = '.\mysqlq.exe'
 & $MQ tables                              # 当前库的表（含注释、行数估算）
 & $MQ schema sale_pay --format json       # 列 + 索引 + DDL，一次拿全
 & $MQ query 'SELECT * FROM sale_pay LIMIT 5' --format json
+& $MQ explain 'SELECT * FROM sale_pay WHERE pay_status = "SUCCESS"'   # 执行计划
 & $MQ find order                          # 按表名/列名/注释搜索
 ```
 
@@ -85,6 +86,7 @@ $MQ = '.\mysqlq.exe'
 | `ddl <table>` | `SHOW CREATE TABLE` 原文 |
 | `schema <table>` | 列 + 索引 + DDL 组合视图 |
 | `query <sql>` | 执行只读 SQL（`-` 表示从 stdin 读取） |
+| `explain <sql>` | 输出只读 SQL 的执行计划（`-` 表示从 stdin 读取，自动补 `EXPLAIN` 前缀） |
 | `find <keyword>` | 按名称/注释模糊搜索表和列 |
 | `version` | 工具版本 |
 
